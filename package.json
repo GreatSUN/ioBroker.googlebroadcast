@@ -6,7 +6,7 @@
   "license": "MIT",
   "main": "main.js",
   "dependencies": {
-    "@iobroker/adapter-core": "^3.2.3",
+    "@iobroker/adapter-core": "^3.3.2",
     "google-assistant": "^0.7.0",
     "multicast-dns": "^7.2.5",
     "googleapis": "^126.0.0"
