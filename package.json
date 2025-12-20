@@ -7,15 +7,9 @@
   "main": "main.js",
   "dependencies": {
     "@iobroker/adapter-core": "^3.2.3",
-    "google-assistant": "^0.5.4",
+    "google-assistant": "^0.7.0",
     "multicast-dns": "^7.2.5",
-    "googleapis": "^144.0.0",
-    "@grpc/grpc-js": "^1.12.5"
-  },
-  "overrides": {
-    "google-assistant": {
-      "grpc": "$@grpc/grpc-js"
-    }
+    "googleapis": "^126.0.0"
   },
   "keywords": [
     "iobroker",
