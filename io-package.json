@@ -1,0 +1,73 @@
+{
+  "common": {
+    "name": "googlebroadcast",
+    "version": "0.0.1",
+    "news": {
+      "0.0.1": {
+        "en": "Initial release",
+        "de": "Erstveröffentlichung"
+      }
+    },
+    "title": "Google Broadcast",
+    "desc": {
+      "en": "Broadcast text to Google Home devices natively",
+      "de": "Sendet Textnachrichten nativ an Google Home Geräte"
+    },
+    "authors": [
+      "User"
+    ],
+    "keywords": [
+      "google",
+      "broadcast",
+      "assistant"
+    ],
+    "platform": "Javascript/Node.js",
+    "main": "main.js",
+    "icon": "googlebroadcast.png",
+    "enabled": true,
+    "extIcon": true,
+    "readme": "https://github.com/yourname/iobroker.googlebroadcast/blob/master/README.md",
+    "loglevel": "info",
+    "mode": "daemon",
+    "type": "multimedia",
+    "compact": true,
+    "connectionType": "cloud",
+    "dataSource": "push",
+    "materialize": true
+  },
+  "native": {
+    "jsonCredentials": "",
+    "savedTokens": "",
+    "deviceModelId": "iobroker-broadcast-v1",
+    "scanInterval": 30
+  },
+  "objects": [],
+  "instanceObjects": [
+    {
+      "_id": "broadcast_all",
+      "type": "state",
+      "common": {
+        "name": "Broadcast to All",
+        "type": "string",
+        "role": "text",
+        "read": true,
+        "write": true,
+        "desc": "Text written here is broadcasted to the whole house"
+      },
+      "native": {}
+    },
+    {
+      "_id": "info.connection",
+      "type": "state",
+      "common": {
+        "role": "indicator.connected",
+        "name": "If connected to Google Assistant",
+        "type": "boolean",
+        "read": true,
+        "write": false,
+        "def": false
+      },
+      "native": {}
+    }
+  ]
+}

@@ -1,0 +1,20 @@
+{
+  "name": "iobroker.googlebroadcast",
+  "version": "0.0.1",
+  "description": "Broadcasts text messages via Google Assistant to specific devices or groups",
+  "author": "User",
+  "license": "MIT",
+  "main": "main.js",
+  "dependencies": {
+    "@iobroker/adapter-core": "^3.2.3",
+    "google-assistant": "^0.5.4",
+    "multicast-dns": "^7.2.5"
+  },
+  "keywords": [
+    "iobroker",
+    "google",
+    "broadcast",
+    "assistant",
+    "home"
+  ]
+}

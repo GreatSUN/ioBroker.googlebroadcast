@@ -1,0 +1,153 @@
+<html>
+<head>
+    <link rel="stylesheet" type="text/css" href="../../css/adapter.css"/>
+    <link rel="stylesheet" type="text/css" href="../../lib/css/materialize.css">
+    <script type="text/javascript" src="../../lib/js/jquery-3.2.1.min.js"></script>
+    <script type="text/javascript" src="../../socket.io/socket.io.js"></script>
+    <script type="text/javascript" src="../../js/translate.js"></script>
+    <script type="text/javascript" src="../../lib/js/materialize.js"></script>
+    <script type="text/javascript" src="../../js/adapter-settings.js"></script>
+    <script type="text/javascript" src="words.js"></script>
+
+    <script type="text/javascript">
+        function load(settings, onChange) {
+            if (!settings) return;
+            $('.value').each(function () {
+                var $key = $(this);
+                var id = $key.attr('id');
+                if ($key.attr('type') === 'checkbox') {
+                    $key.prop('checked', settings[id]).on('change', () => onChange());
+                } else {
+                    $key.val(settings[id]).on('change', () => onChange()).on('keyup', () => onChange());
+                }
+            });
+            onChange(false);
+
+            // BUTTON: Get Auth URL
+            $('#btn_get_url').on('click', function() {
+                var json = $('#jsonCredentials').val();
+                if(!json) {
+                    alert(_('Please paste credentials.json first'));
+                    return;
+                }
+                try {
+                    var creds = JSON.parse(json);
+                    var keys = creds.installed || creds.web;
+                    
+                    sendTo(null, 'getAuthUrl', { client_id: keys.client_id }, function(res) {
+                        if(res.url) {
+                            window.open(res.url, '_blank');
+                            $('#auth_step_2').show();
+                        }
+                    });
+                } catch(e) {
+                    alert(_('Error') + ': ' + e);
+                }
+            });
+
+            // BUTTON: Exchange Code
+            $('#btn_exchange').on('click', function() {
+                var code = $('#authCode').val();
+                var json = $('#jsonCredentials').val();
+                var creds = JSON.parse(json);
+                var keys = creds.installed || creds.web;
+
+                sendTo(null, 'exchangeCode', { 
+                    code: code,
+                    clientId: keys.client_id,
+                    clientSecret: keys.client_secret
+                }, function(res) {
+                    if(res.tokens) {
+                        $('#savedTokens').val(JSON.stringify(res.tokens));
+                        onChange();
+                        M.toast({html: _('Tokens generated and saved!')});
+                    } else {
+                        alert(_('Error') + ': ' + res.error);
+                    }
+                });
+            });
+            
+            // BUTTON: Scan
+            $('#btn_scan').on('click', function() {
+                sendTo(null, 'scan', {}, function(res) {
+                    M.toast({html: _('Scan started in background')});
+                });
+            });
+        }
+
+        function save(callback) {
+            var obj = {};
+            $('.value').each(function () {
+                var $this = $(this);
+                if ($this.attr('type') === 'checkbox') {
+                    obj[$this.attr('id')] = $this.prop('checked');
+                } else {
+                    obj[$this.attr('id')] = $this.val();
+                }
+            });
+            callback(obj);
+        }
+    </script>
+    
+    <style>
+        .section { margin-bottom: 20px; border-bottom: 1px solid #ccc; padding-bottom: 10px; }
+        .step { font-weight: bold; color: #2196f3; }
+    </style>
+</head>
+<body>
+    <div class="m adapter-container">
+        <div class="row">
+            <div class="col s12 m4 l2">
+                <img src="googlebroadcast.png" class="logo">
+            </div>
+        </div>
+
+        <div class="row">
+            <div class="col s12">
+                <h5 class="translate">Google Credentials</h5>
+                <p class="translate">Paste the content of your downloaded credentials.json (OAuth Client) here.</p>
+                <textarea id="jsonCredentials" class="value materialize-textarea" style="font-family: monospace; font-size: 0.8em;"></textarea>
+            </div>
+        </div>
+
+        <div class="row">
+            <div class="col s12">
+                <h5 class="translate">Authentication</h5>
+                <p><span class="step translate">Step A: Click to open Google Login</span></p>
+                <a class="waves-effect waves-light btn translate" id="btn_get_url">Get Auth URL</a>
+                
+                <div id="auth_step_2" style="margin-top: 15px;">
+                    <p><span class="step translate">Step B: Copy the code from the browser and paste it here</span></p>
+                    <input type="text" id="authCode" class="translate" placeholder="Paste 4/0A..." />
+                    <a class="waves-effect waves-light btn translate" id="btn_exchange">Generate Tokens</a>
+                </div>
+            </div>
+        </div>
+
+        <div class="row">
+            <div class="col s12">
+                <h5 class="translate">Token Storage (Automatic)</h5>
+                <textarea id="savedTokens" class="value materialize-textarea" readonly></textarea>
+            </div>
+        </div>
+
+        <div class="row">
+            <div class="col s6">
+                <h5 class="translate">General Settings</h5>
+                <div class="input-field">
+                    <input type="text" id="deviceModelId" class="value" />
+                    <label for="deviceModelId" class="translate">Device Model ID (from Actions Console)</label>
+                </div>
+                <div class="input-field">
+                    <input type="number" id="scanInterval" class="value" />
+                    <label for="scanInterval" class="translate">Scan Interval (minutes)</label>
+                </div>
+            </div>
+            <div class="col s6">
+                <h5 class="translate">Actions</h5>
+                <a class="waves-effect waves-light btn blue translate" id="btn_scan">Scan Devices Now</a>
+            </div>
+        </div>
+    </div>
+</body>
+</html>
