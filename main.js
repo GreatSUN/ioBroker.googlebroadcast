@@ -35,6 +35,14 @@ class GoogleBroadcast extends utils.Adapter {
         this.stereoMap = new Map();
         this.groupsByIp = new Map();
         this.devicesByIp = new Map();
+        this.groupsByNorm = new Map(); // Normalized Group Name -> Group Info
+        this.devicesByNorm = new Map(); // Normalized Device Name -> Device ID
+    }
+
+    normalizeName(name) {
+        return name.toLowerCase()
+            .replace(/[^a-z0-9]/g, '') // remove all non-alphanumeric (spaces, dashes, underscores)
+            .replace(/(pair|paar)$/, ''); // remove suffix at the end
     }
 
     async onReady() {
@@ -223,12 +231,27 @@ class GoogleBroadcast extends utils.Adapter {
 
         this.log.debug(`[mDNS] Found ${friendlyName} at ${ip}:${port} (${model})`);
 
+        // Update Normalization Maps
+        const normName = this.normalizeName(friendlyName);
+        
         if (folder === 'groups') {
             this.groupsByIp.set(ip, { name: friendlyName, port: port, isStereo: isStereoPair });
-            
+            if (isStereoPair) {
+                this.groupsByNorm.set(normName, { name: friendlyName, ip: ip, port: port });
+            }
+
             // Check if we have a device waiting at this IP (Master)
             if (this.devicesByIp.has(ip) && isStereoPair) {
                 const childId = this.devicesByIp.get(ip);
+                this.stereoMap.set(childId, { pairIp: ip, pairPort: port, groupName: friendlyName });
+                this.extendObjectAsync(`devices.${childId}`, { native: { StereoSpeakerGroup: friendlyName } });
+            }
+
+            // Fuzzy Match for Slave Speaker (Different IP)
+            // e.g., Device: "Living Room", Group: "Living Room-Paar" -> Norm: "livingroom"
+            if (isStereoPair && this.devicesByNorm.has(normName)) {
+                const childId = this.devicesByNorm.get(normName);
+                this.log.info(`[STEREO] Fuzzy Link: ${childId} -> ${friendlyName} (Group)`);
                 this.stereoMap.set(childId, { pairIp: ip, pairPort: port, groupName: friendlyName });
                 this.extendObjectAsync(`devices.${childId}`, { native: { StereoSpeakerGroup: friendlyName } });
             }
@@ -239,6 +262,7 @@ class GoogleBroadcast extends utils.Adapter {
             }
         } else {
             this.devicesByIp.set(ip, cleanId);
+            this.devicesByNorm.set(normName, cleanId);
 
             // Check if this device shares IP with a Group (Master)
             if (this.groupsByIp.has(ip)) {
@@ -246,6 +270,13 @@ class GoogleBroadcast extends utils.Adapter {
                 if (g.isStereo) {
                     this.stereoMap.set(cleanId, { pairIp: ip, pairPort: g.port, groupName: g.name });
                 }
+            }
+
+            // Fuzzy Match for Slave Speaker (Check if matching Group exists)
+            if (this.groupsByNorm.has(normName)) {
+                const g = this.groupsByNorm.get(normName);
+                this.log.info(`[STEREO] Fuzzy Link: ${friendlyName} -> ${g.name} (Group)`);
+                this.stereoMap.set(cleanId, { pairIp: g.ip, pairPort: g.port, groupName: g.name });
             }
         }
 
