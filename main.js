@@ -28,11 +28,11 @@ class GoogleBroadcast extends utils.Adapter {
     }
 
     async onReady() {
-        // Define paths safely here
+        // Define paths safely
         this.credsPath = path.join(os.tmpdir(), `iobroker_google_${this.namespace}_creds.json`);
         this.tokensPath = path.join(os.tmpdir(), `iobroker_google_${this.namespace}_tokens.json`);
 
-        // 1. Try Initialize
+        // 1. Initialize Assistant (Authentication Logic is inside)
         await this.initGoogleAssistant();
 
         // 2. Initialize mDNS
@@ -53,20 +53,60 @@ class GoogleBroadcast extends utils.Adapter {
     async initGoogleAssistant() {
         const credentialsJson = this.config.jsonCredentials;
         
-        // Read tokens from STATE
+        // --- AUTH LOGIC START ---
+        
+        // 1. Check if we already have valid tokens in STATE
         const tokenState = await this.getStateAsync('tokens');
         let tokensJson = tokenState && tokenState.val ? tokenState.val : null;
+        let tokensObj = null;
 
-        if (typeof tokensJson === 'object') tokensJson = JSON.stringify(tokensJson);
+        if (tokensJson && typeof tokensJson === 'string' && tokensJson !== '{}') {
+            try {
+                tokensObj = JSON.parse(tokensJson);
+            } catch (e) {
+                this.log.warn('Stored tokens were invalid JSON. Ignoring.');
+            }
+        }
 
-        if (!credentialsJson || !tokensJson || tokensJson === '{}') {
-            this.log.warn('Adapter waiting for authentication. Please open Admin and use "Generate Tokens".');
+        // 2. If NO tokens, check if we have an Auth Code in Config to generate them
+        if (!tokensObj && this.config.authCode && credentialsJson) {
+            this.log.info('No tokens found, but Auth Code detected. Attempting exchange...');
+            try {
+                const keys = JSON.parse(credentialsJson);
+                const clientConfig = keys.installed || keys.web;
+                
+                const oauth2Client = new google.auth.OAuth2(
+                    clientConfig.client_id,
+                    clientConfig.client_secret,
+                    'urn:ietf:wg:oauth:2.0:oob'
+                );
+
+                const { tokens } = await oauth2Client.getToken(this.config.authCode);
+                
+                if (tokens) {
+                    this.log.info('Tokens generated successfully! Saving to State.');
+                    tokensObj = tokens;
+                    tokensJson = JSON.stringify(tokens);
+                    // Save to State (Does not trigger restart)
+                    await this.setStateAsync('tokens', tokensJson, true);
+                }
+            } catch (e) {
+                this.log.error('Failed to exchange Auth Code: ' + e.message);
+                this.log.info('Please generate a NEW code in Admin and Save again.');
+            }
+        }
+
+        // 3. Validation
+        if (!credentialsJson || !tokensObj) {
+            this.log.warn('Adapter is not authenticated. Please go to Instance Settings, paste Credentials & Auth Code, and Save.');
             this.setState('info.connection', false, true);
             return;
         }
 
+        // --- AUTH LOGIC END ---
+
         try {
-            // Write files to temp dir
+            // Write files to temp dir (Library requirement)
             fs.writeFileSync(this.credsPath, credentialsJson);
             fs.writeFileSync(this.tokensPath, tokensJson);
             
@@ -83,7 +123,7 @@ class GoogleBroadcast extends utils.Adapter {
                 }
             };
 
-            // Cleanup old instance if exists
+            // Clean up old instance if re-initializing
             if (this.assistant) {
                 this.assistant.removeAllListeners();
                 this.assistant = null;
@@ -113,32 +153,6 @@ class GoogleBroadcast extends utils.Adapter {
             if (obj.command === 'scan') {
                 this.scanNetwork();
                 if (obj.callback) this.sendTo(obj.from, obj.command, { result: 'OK' }, obj.callback);
-            }
-            
-            if (obj.command === 'exchangeCode') {
-                const { code, clientId, clientSecret } = obj.message;
-                const oauth2Client = new google.auth.OAuth2(
-                    clientId,
-                    clientSecret,
-                    'urn:ietf:wg:oauth:2.0:oob'
-                );
-
-                try {
-                    const { tokens } = await oauth2Client.getToken(code);
-                    this.log.info('Tokens generated successfully via Admin!');
-                    
-                    // Save to STATE (Instant, no restart)
-                    await this.setStateAsync('tokens', JSON.stringify(tokens), true);
-                    
-                    // Initialize immediately
-                    await this.initGoogleAssistant();
-
-                    // Reply success
-                    this.sendTo(obj.from, obj.command, { success: true }, obj.callback);
-                } catch (e) {
-                     this.log.error("Auth Exchange Error: " + e);
-                     this.sendTo(obj.from, obj.command, { error: e.message }, obj.callback);
-                }
             }
         }
     }
@@ -235,7 +249,7 @@ class GoogleBroadcast extends utils.Adapter {
         try {
             if (this.scanInterval) clearInterval(this.scanInterval);
             if (this.mdns) this.mdns.destroy();
-            // Optional: cleanup temp files
+            // Cleanup temp files
             if (this.credsPath && fs.existsSync(this.credsPath)) fs.unlinkSync(this.credsPath);
             if (this.tokensPath && fs.existsSync(this.tokensPath)) fs.unlinkSync(this.tokensPath);
             callback();

@@ -23,11 +23,11 @@
             });
             onChange(false);
 
-            // 1. Generate Link
+            // Client-Side Link Generator (Does not use adapter backend)
             $('#btn_generate_link').on('click', function() {
                 var json = $('#jsonCredentials').val();
                 if(!json) {
-                    alert(_('Please paste credentials.json and SAVE the adapter first'));
+                    alert(_('Please paste credentials.json first'));
                     return;
                 }
                 try {
@@ -48,33 +48,8 @@
                     alert('Error: ' + e);
                 }
             });
-
-            // 2. Exchange Code
-            $('#btn_exchange').on('click', function() {
-                var code = $('#authCode').val();
-                var json = $('#jsonCredentials').val();
-                
-                if (!json) { alert('Missing credentials'); return; }
-                if (!code) { alert('Missing code'); return; }
-
-                var creds = JSON.parse(json);
-                var keys = creds.installed || creds.web;
-
-                sendTo(null, 'exchangeCode', { 
-                    code: code,
-                    clientId: keys.client_id,
-                    clientSecret: keys.client_secret
-                }, function(res) {
-                    if(res && res.success) {
-                        M.toast({html: 'Success! Tokens saved. Adapter is connecting...'});
-                        $('#authCode').val(''); // Clear code for security
-                    } else {
-                        alert('Error: ' + ((res && res.error) ? res.error : 'Unknown error'));
-                    }
-                });
-            });
             
-            // 3. Scan
+            // Manual Scan Button
             $('#btn_scan').on('click', function() {
                 sendTo(null, 'scan', {}, function(res) {
                     M.toast({html: 'Scan started'});
@@ -117,7 +92,7 @@
         <div class="row">
             <div class="col s12">
                 <h5 class="translate">Google Credentials</h5>
-                <p class="translate">1. Paste credentials.json here and CLICK SAVE at the bottom.</p>
+                <p class="translate">1. Paste credentials.json here.</p>
                 <textarea id="jsonCredentials" class="value materialize-textarea" style="font-family: monospace; font-size: 0.8em; min-height: 100px;"></textarea>
             </div>
         </div>
@@ -135,9 +110,8 @@
                 </div>
 
                 <div id="auth_step_2" style="margin-top: 25px; display:none;">
-                    <p class="translate">3. Paste Code & Generate Tokens (Instant)</p>
-                    <input type="text" id="authCode" placeholder="Paste 4/0A... here" />
-                    <a class="waves-effect waves-light btn green translate" id="btn_exchange">Generate Tokens</a>
+                    <p class="translate">3. Paste Code & CLICK SAVE at the bottom</p>
+                    <input type="text" id="authCode" class="value" placeholder="Paste 4/0A... here" />
                 </div>
             </div>
         </div>

@@ -41,6 +41,7 @@
   },
   "native": {
     "jsonCredentials": "",
+    "authCode": "",
     "deviceModelId": "iobroker-model",
     "scanInterval": 30
   },
@@ -68,7 +69,7 @@
         "role": "value",
         "read": true,
         "write": true,
-        "def": "{}"
+        "def": ""
       },
       "native": {}
     },
