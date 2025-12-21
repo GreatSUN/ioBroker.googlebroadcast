@@ -29,7 +29,7 @@
             });
 
             // 1. Try to get interfaces from running adapter
-            sendTo(null, 'getInterfaces', {}, function (response) {
+            sendTo(adapter + '.' + instance, 'getInterfaces', {}, function (response) {
                 if (response && response.result) {
                     mergeInterfaces(response.result, settings.webServerIp);
                 }
