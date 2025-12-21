@@ -1,8 +1,11 @@
 {
   "common": {
     "name": "googlebroadcast",
-    "version": "0.4.6",
+    "version": "0.4.7",
     "news": {
+      "0.4.7": {
+        "en": "Improved Chromecast connection logic to avoid NOT_ALLOWED errors and added Manual IP setting"
+      },
       "0.4.6": {
         "en": "Added verbose HTTP request logging for debugging firewall issues"
       },
@@ -72,7 +75,8 @@
     "ttsSpeed": 1,
     "scanInterval": 30,
     "webServerIp": "",
-    "webServerPort": 8091
+    "webServerPort": 8091,
+    "manualIp": ""
   },
   "objects": [],
   "instanceObjects": [

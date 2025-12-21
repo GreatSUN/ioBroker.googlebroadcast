@@ -45,7 +45,11 @@ class GoogleBroadcast extends utils.Adapter {
 
         this.serverPort = this.config.webServerPort || 8091;
         
-        if (this.config.webServerIp) {
+        // Priority: Manual IP -> Dropdown IP -> Auto-detected
+        if (this.config.manualIp) {
+            this.localIp = this.config.manualIp;
+            this.log.info(`Using configured Manual IP: ${this.localIp}`);
+        } else if (this.config.webServerIp) {
             this.localIp = this.config.webServerIp;
             this.log.info(`Using configured Web Server IP: ${this.localIp}`);
         } else {
@@ -197,8 +201,6 @@ class GoogleBroadcast extends utils.Adapter {
 
     async onMessage(obj) {
         if (!obj) return;
-
-        // Log incoming message for debugging
         this.log.debug(`onMessage received: ${JSON.stringify(obj)}`);
 
         if (obj.command === 'scan') {
@@ -206,7 +208,6 @@ class GoogleBroadcast extends utils.Adapter {
             if (obj.callback) this.sendTo(obj.from, obj.command, { result: 'OK' }, obj.callback);
         }
         
-        // --- Handle Interface Request ---
         if (obj.command === 'getInterfaces') {
             try {
                 const interfaces = os.networkInterfaces();
@@ -303,14 +304,31 @@ class GoogleBroadcast extends utils.Adapter {
             client.connect(deviceIp, () => {
                 client.getSessions((err, sessions) => {
                     if (err) {
-                        this.playOnDevice(client, localUrl);
+                        this.log.warn(`Could not get sessions for ${deviceIp}, forcing launch.`);
+                        this.launchNew(client, localUrl);
                         return;
                     }
-                    const active = sessions.find(s => s.appId !== 'CC1AD845');
+                    
+                    const active = sessions.find(s => s.appId === 'CC1AD845');
+                    const other = sessions.find(s => s.appId !== 'CC1AD845');
+
                     if (active) {
-                        client.stop(active, () => this.playOnDevice(client, localUrl));
+                        this.log.debug(`DefaultMediaReceiver already active on ${deviceIp}, joining session...`);
+                        client.join(active, DefaultMediaReceiver, (err, player) => {
+                            if (err) {
+                                this.log.warn(`Join failed (${err}), trying to launch new...`);
+                                this.launchNew(client, localUrl);
+                            } else {
+                                this.loadMedia(player, localUrl, client);
+                            }
+                        });
+                    } else if (other) {
+                        this.log.debug(`Other app active on ${deviceIp}, stopping it...`);
+                        client.stop(other, () => {
+                             setTimeout(() => this.launchNew(client, localUrl), 500); 
+                        });
                     } else {
-                        this.playOnDevice(client, localUrl);
+                        this.launchNew(client, localUrl);
                     }
                 });
             });
@@ -326,27 +344,31 @@ class GoogleBroadcast extends utils.Adapter {
         }
     }
 
-    playOnDevice(client, url) {
+    launchNew(client, url) {
         client.launch(DefaultMediaReceiver, (err, player) => {
             if (err) {
-                this.log.error('Launch Error: ' + err);
+                this.log.error(`Launch Error: ${err}`);
                 client.close();
                 return;
             }
-            const media = {
-                contentId: url,
-                contentType: 'audio/mpeg',
-                streamType: 'BUFFERED'
-            };
-            player.load(media, { autoplay: true }, (err, status) => {
-                if (err) {
-                    this.log.error('Load Error: ' + err);
-                    client.close();
-                }
-            });
-            player.on('status', (s) => {
-                if (s && s.playerState === 'IDLE') client.close();
-            });
+            this.loadMedia(player, url, client);
+        });
+    }
+
+    loadMedia(player, url, client) {
+        const media = {
+            contentId: url,
+            contentType: 'audio/mpeg',
+            streamType: 'BUFFERED'
+        };
+        player.load(media, { autoplay: true }, (err, status) => {
+            if (err) {
+                this.log.error(`Load Error: ${err}`);
+                client.close();
+            }
+        });
+        player.on('status', (s) => {
+            if (s && s.playerState === 'IDLE') client.close();
         });
     }
 
