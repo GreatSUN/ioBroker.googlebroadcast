@@ -33,6 +33,8 @@ class GoogleBroadcast extends utils.Adapter {
         this.localIp = '';
         this.audioBuffers = new Map();
         this.stereoMap = new Map();
+        this.groupsByIp = new Map();
+        this.devicesByIp = new Map();
     }
 
     async onReady() {
@@ -119,13 +121,14 @@ class GoogleBroadcast extends utils.Adapter {
         } catch (e) { this.log.error(`Assistant Init Error: ${e.message}`); }
     }
 
-    async castTTS(deviceId, deviceIp, text, lang, voice) {
-        this.log.debug(`[TTS] Request: ${deviceId} (${deviceIp}) -> "${text}"`);
+    async castTTS(deviceId, deviceIp, text, lang, voice, devicePort) {
+        this.log.debug(`[TTS] Request: ${deviceId} (${deviceIp}:${devicePort || 8009}) -> "${text}"`);
 
         if (this.stereoMap.has(deviceId)) {
             const mapping = this.stereoMap.get(deviceId);
             this.log.info(`[STEREO] Redirecting child ${deviceId} to Pair IP: ${mapping.pairIp}`);
             deviceIp = mapping.pairIp;
+            if (mapping.pairPort) devicePort = mapping.pairPort;
         }
 
         try {
@@ -148,8 +151,9 @@ class GoogleBroadcast extends utils.Adapter {
             const localUrl = `http://${this.localIp}:${this.serverPort}/tts/${deviceId}.mp3?t=${Date.now()}`;
 
             const client = new Client();
-            client.connect(deviceIp, () => {
-                this.log.debug(`[CAST] Connected to ${deviceIp}. Starting heartbeat.`);
+            const connectOptions = { host: deviceIp, port: devicePort || 8009 };
+            client.connect(connectOptions, () => {
+                this.log.debug(`[CAST] Connected to ${deviceIp}:${connectOptions.port}. Starting heartbeat.`);
                 client.heartbeat.start();
                 client.launch(DefaultMediaReceiver, (err, player) => {
                     if (err) { 
@@ -197,14 +201,17 @@ class GoogleBroadcast extends utils.Adapter {
         let friendlyName, model;
         const txt = records.find(r => r.type === 'TXT' && r.name === instanceName);
         if (txt) {
+            this.log.debug(`[mDNS] TXT Record for ${instanceName}:`);
             txt.data.forEach(buf => {
                 const s = buf.toString();
+                this.log.debug(`  - ${s}`);
                 if (s.startsWith('fn=')) friendlyName = s.substring(3);
                 if (s.startsWith('md=')) model = s.substring(3);
             });
         }
 
         const srv = records.find(r => r.type === 'SRV' && r.name === instanceName);
+        const port = srv ? srv.data.port : 8009;
         const aRecord = records.find(r => r.type === 'A' && r.name.toLowerCase().replace(/\.$/, '') === (srv ? srv.data.target.toLowerCase().replace(/\.$/, '') : ''));
         const ip = aRecord ? aRecord.data : null;
 
@@ -214,14 +221,35 @@ class GoogleBroadcast extends utils.Adapter {
         const isStereoPair = (friendlyName.toLowerCase().includes('paar') || friendlyName.toLowerCase().includes('pair'));
         const folder = (model === 'Google Cast Group' || isStereoPair) ? 'groups' : 'devices';
 
-        this.log.debug(`[mDNS] Found ${friendlyName} at ${ip} (${model})`);
+        this.log.debug(`[mDNS] Found ${friendlyName} at ${ip}:${port} (${model})`);
 
-        if (isStereoPair) {
-            const childBase = cleanId.split('_Paar')[0].split('_Pair')[0];
-            this.stereoMap.set(childBase, { pairIp: ip, groupName: friendlyName });
+        if (folder === 'groups') {
+            this.groupsByIp.set(ip, { name: friendlyName, port: port, isStereo: isStereoPair });
+            
+            // Check if we have a device waiting at this IP (Master)
+            if (this.devicesByIp.has(ip) && isStereoPair) {
+                const childId = this.devicesByIp.get(ip);
+                this.stereoMap.set(childId, { pairIp: ip, pairPort: port, groupName: friendlyName });
+                this.extendObjectAsync(`devices.${childId}`, { native: { StereoSpeakerGroup: friendlyName } });
+            }
+
+            if (isStereoPair) {
+                const childBase = cleanId.split('_Paar')[0].split('_Pair')[0];
+                this.stereoMap.set(childBase, { pairIp: ip, pairPort: port, groupName: friendlyName });
+            }
+        } else {
+            this.devicesByIp.set(ip, cleanId);
+
+            // Check if this device shares IP with a Group (Master)
+            if (this.groupsByIp.has(ip)) {
+                const g = this.groupsByIp.get(ip);
+                if (g.isStereo) {
+                    this.stereoMap.set(cleanId, { pairIp: ip, pairPort: g.port, groupName: g.name });
+                }
+            }
         }
 
-        await this.setObjectNotExistsAsync(`${folder}.${cleanId}`, { type: 'device', common: { name: friendlyName }, native: { ip: ip, model: model } });
+        await this.setObjectNotExistsAsync(`${folder}.${cleanId}`, { type: 'device', common: { name: friendlyName }, native: { ip: ip, port: port, model: model } });
         
         // Add Availability State
         await this.setObjectNotExistsAsync(`${folder}.${cleanId}.not-available`, { type: 'state', common: { name: 'Not Available', type: 'boolean', role: 'indicator.maintenance', read: true, write: false, def: false } });
@@ -240,7 +268,7 @@ class GoogleBroadcast extends utils.Adapter {
             if (id.endsWith('broadcast_all')) {
                 const devices = await this.getDevicesAsync();
                 for (const dev of devices) {
-                    if (dev.native && dev.native.ip) this.castTTS(dev._id.split('.').pop(), dev.native.ip, state.val);
+                    if (dev.native && dev.native.ip) this.castTTS(dev._id.split('.').pop(), dev.native.ip, state.val, null, null, dev.native.port);
                 }
             } else if (id.includes('.broadcast')) {
                 const parts = id.split('.');
@@ -248,7 +276,7 @@ class GoogleBroadcast extends utils.Adapter {
                 const folder = parts[parts.length - 3];
                 const deviceObj = await this.getObjectAsync(`${this.namespace}.${folder}.${deviceId}`);
                 if (deviceObj && deviceObj.native && deviceObj.native.ip) {
-                    this.castTTS(deviceId, deviceObj.native.ip, state.val);
+                    this.castTTS(deviceId, deviceObj.native.ip, state.val, null, null, deviceObj.native.port);
                 }
             }
             this.setState(id, null, true);
