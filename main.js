@@ -21,6 +21,7 @@ class GoogleBroadcast extends utils.Adapter {
         this.on('unload', this.onUnload.bind(this));
 
         this.assistant = null;
+        this.assistantReady = false; // Safety flag
         this.mdns = null;
         this.scanInterval = null;
         this.credsPath = null;
@@ -32,7 +33,7 @@ class GoogleBroadcast extends utils.Adapter {
         this.credsPath = path.join(os.tmpdir(), `iobroker_google_${this.namespace}_creds.json`);
         this.tokensPath = path.join(os.tmpdir(), `iobroker_google_${this.namespace}_tokens.json`);
 
-        // 1. Initialize Assistant (Authentication Logic is inside)
+        // 1. Initialize Assistant
         await this.initGoogleAssistant();
 
         // 2. Initialize mDNS
@@ -128,20 +129,25 @@ class GoogleBroadcast extends utils.Adapter {
                 this.assistant.removeAllListeners();
                 this.assistant = null;
             }
+            this.assistantReady = false;
 
             this.assistant = new GoogleAssistant(config.auth);
             
             this.assistant.on('ready', () => {
                 this.log.info('Google Assistant SDK connected!');
+                this.assistantReady = true;
                 this.setState('info.connection', true, true);
             });
             
             this.assistant.on('error', (err) => {
                 this.log.error('Google Assistant Error: ' + err);
+                this.assistantReady = false;
                 this.setState('info.connection', false, true);
             });
 
-            this.assistant.start();
+            // REMOVED: this.assistant.start(); 
+            // Reason: This method starts a conversation, not the connection. 
+            // Calling it here caused the "Tried calling start() before ready" error.
 
         } catch (e) {
             this.log.error('Init failed: ' + e.message);
@@ -158,8 +164,8 @@ class GoogleBroadcast extends utils.Adapter {
     }
 
     sendBroadcast(textCommand) {
-        if (!this.assistant) {
-            this.log.warn('Cannot broadcast: Assistant not ready.');
+        if (!this.assistant || !this.assistantReady) {
+            this.log.warn('Cannot broadcast: Assistant not ready yet.');
             return;
         }
         const config = {
@@ -249,7 +255,6 @@ class GoogleBroadcast extends utils.Adapter {
         try {
             if (this.scanInterval) clearInterval(this.scanInterval);
             if (this.mdns) this.mdns.destroy();
-            // Cleanup temp files
             if (this.credsPath && fs.existsSync(this.credsPath)) fs.unlinkSync(this.credsPath);
             if (this.tokensPath && fs.existsSync(this.tokensPath)) fs.unlinkSync(this.tokensPath);
             callback();
