@@ -313,7 +313,7 @@ class GoogleBroadcast extends utils.Adapter {
                 client.getSessions((err, sessions) => {
                     if (err) {
                         this.log.warn(`Could not get sessions for ${deviceIp}: ${err}. Forcing launch.`);
-                        this.launchNew(client, localUrl);
+                        this.launchNew(client, localUrl, false);
                         return;
                     }
                     
@@ -327,7 +327,7 @@ class GoogleBroadcast extends utils.Adapter {
                         client.join(active, DefaultMediaReceiver, (err, player) => {
                             if (err) {
                                 this.log.warn(`Join failed (${err}), trying to launch new...`);
-                                this.launchNew(client, localUrl);
+                                this.launchNew(client, localUrl, false);
                             } else {
                                 this.log.debug('Joined existing session successfully.');
                                 this.loadMedia(player, localUrl, client);
@@ -337,11 +337,11 @@ class GoogleBroadcast extends utils.Adapter {
                         this.log.debug(`Other app active on ${deviceIp}, stopping it...`);
                         client.stop(other, () => {
                              this.log.debug('Stopped other app. Waiting 500ms...');
-                             setTimeout(() => this.launchNew(client, localUrl), 500); 
+                             setTimeout(() => this.launchNew(client, localUrl, false), 500); 
                         });
                     } else {
                         this.log.debug('No active session. Launching new...');
-                        this.launchNew(client, localUrl);
+                        this.launchNew(client, localUrl, false);
                     }
                 });
             });
@@ -353,12 +353,23 @@ class GoogleBroadcast extends utils.Adapter {
         }
     }
 
-    launchNew(client, url) {
+    launchNew(client, url, retried) {
         this.log.debug('Attempting to Launch DefaultMediaReceiver...');
         client.launch(DefaultMediaReceiver, (err, player) => {
             if (err) {
-                this.log.error(`Launch Error: ${err.message || JSON.stringify(err)}`);
-                client.close();
+                // If launch fails with NOT_ALLOWED, try the "Kick" strategy once
+                if (!retried) {
+                    this.log.warn(`Launch failed (${JSON.stringify(err)}). Kicking platform and retrying...`);
+                    // We send a generic STOP to the receiver to force close any hidden apps
+                    client.stop({ sessionId: '00000000-0000-0000-0000-000000000000' }, () => {
+                        setTimeout(() => this.launchNew(client, url, true), 750);
+                    });
+                    // Some devices respond better if we also just try to close the client connection wrapper
+                    // But client.stop with a dummy ID is the standard "Kick" way
+                } else {
+                    this.log.error(`Launch Error (Persistent): ${err.message || JSON.stringify(err)}`);
+                    client.close();
+                }
                 return;
             }
             this.log.debug('Launch successful. Loading media...');

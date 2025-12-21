@@ -1,8 +1,11 @@
 {
   "common": {
     "name": "googlebroadcast",
-    "version": "0.4.8",
+    "version": "0.4.9",
     "news": {
+      "0.4.9": {
+        "en": "Implemented 'Kick and Retry' strategy for NOT_ALLOWED errors"
+      },
       "0.4.8": {
         "en": "Added deep debug logging for Chromecast connection and session states"
       },
