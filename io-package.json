@@ -4,42 +4,12 @@
     "version": "0.0.1",
     "news": {
       "0.0.1": {
-        "en": "initial release",
-        "de": "Erstveröffentlichung",
-        "ru": "Начальная версия",
-        "pt": "lançamento inicial",
-        "nl": "Eerste uitgave",
-        "fr": "Premier lancement",
-        "it": "Versione iniziale",
-        "es": "Versión inicial",
-        "pl": "Pierwsze wydanie",
-        "zh-cn": "首次发布"
+        "en": "initial release"
       }
     },
     "title": "Google Assistant Broadcast",
-    "titleLang": {
-      "en": "Google Assistant Broadcast",
-      "de": "Google Assistant Broadcast",
-      "ru": "Трансляция Google Assistant",
-      "pt": "Transmissão do Google Assistant",
-      "nl": "Google Assistant-uitzending",
-      "fr": "Diffusion de l'Assistant Google",
-      "it": "Trasmissione Assistente Google",
-      "es": "Transmisión del Asistente de Google",
-      "pl": "Transmisja Asystenta Google",
-      "zh-cn": "谷歌助手广播"
-    },
     "desc": {
-      "en": "Broadcasts text messages via Google Assistant SDK",
-      "de": "Sendet Textnachrichten über das Google Assistant SDK",
-      "ru": "Транслирует текстовые сообщения через Google Assistant SDK",
-      "pt": "Transmite mensagens de texto via Google Assistant SDK",
-      "nl": "Zendt tekstberichten uit via Google Assistant SDK",
-      "fr": "Diffuse des messages texte via le SDK Google Assistant",
-      "it": "Trasmette messaggi di testo tramite Google Assistant SDK",
-      "es": "Transmite mensajes de texto a través del SDK del Asistente de Google",
-      "pl": "Nadaje wiadomości tekstowe przez Google Assistant SDK",
-      "zh-cn": "通过 Google Assistant SDK 广播文本消息"
+      "en": "Broadcasts text messages via Google Assistant SDK"
     },
     "authors": [
       "User"
@@ -72,6 +42,7 @@
   "native": {
     "jsonCredentials": "",
     "savedTokens": "",
+    "authCode": "",
     "deviceModelId": "iobroker-model",
     "scanInterval": 30
   },
@@ -85,8 +56,7 @@
         "type": "string",
         "role": "text",
         "read": true,
-        "write": true,
-        "desc": "Write text here to broadcast to all home devices"
+        "write": true
       },
       "native": {}
     },

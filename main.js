@@ -3,13 +3,10 @@
 const utils = require('@iobroker/adapter-core');
 const GoogleAssistant = require('google-assistant');
 const mDNS = require('multicast-dns');
-const google = require('googleapis').google; // Required for Admin Auth helper
+const google = require('googleapis').google; 
 
 class GoogleBroadcast extends utils.Adapter {
 
-    /**
-     * @param {Partial<utils.AdapterOptions>} [options={}]
-     */
     constructor(options) {
         super({
             ...options,
@@ -25,17 +22,14 @@ class GoogleBroadcast extends utils.Adapter {
         this.scanInterval = null;
     }
 
-    /**
-     * Is called when databases are connected and adapter received configuration.
-     */
     async onReady() {
-        // 1. Initialize Google Assistant Connection (Non-blocking)
+        // 1. Initialize Google Assistant Connection
         await this.initGoogleAssistant();
 
         // 2. Initialize mDNS Scanner
         this.initMdns();
 
-        // 3. Set up periodic scan if configured
+        // 3. Periodic Scan
         const intervalMinutes = this.config.scanInterval || 30;
         if (intervalMinutes > 0) {
             this.log.info(`Scheduling device scan every ${intervalMinutes} minutes.`);
@@ -47,35 +41,63 @@ class GoogleBroadcast extends utils.Adapter {
         // 4. Initial Scan
         this.scanNetwork();
 
-        // 5. Subscribe to states (Always subscribe so we don't miss commands if auth comes later)
         this.subscribeStates('broadcast_all');
         this.subscribeStates('devices.*.broadcast');
         this.subscribeStates('groups.*.broadcast');
     }
 
-    /**
-     * Initialize the Google Assistant SDK
-     */
     async initGoogleAssistant() {
         const credentialsJson = this.config.jsonCredentials;
-        const savedTokensJson = this.config.savedTokens;
+        let savedTokensJson = this.config.savedTokens;
+        const authCode = this.config.authCode;
+
+        // --- NEW: AUTO-EXCHANGE LOGIC ---
+        // If we have credentials and a code, but no tokens (or user pasted a new code), try to exchange it.
+        if (credentialsJson && authCode) {
+            this.log.info('Auth Code detected in configuration. Attempting to generate tokens...');
+            try {
+                const keys = JSON.parse(credentialsJson);
+                const clientConfig = keys.installed || keys.web;
+                
+                if (clientConfig) {
+                    const oauth2Client = new google.auth.OAuth2(
+                        clientConfig.client_id,
+                        clientConfig.client_secret,
+                        'urn:ietf:wg:oauth:2.0:oob'
+                    );
+
+                    const { tokens } = await oauth2Client.getToken(authCode);
+                    this.log.info('Tokens generated successfully! Saving to configuration...');
+
+                    // Save new tokens and clear the code so we don't try again
+                    await this.extendForeignObjectAsync(`system.adapter.${this.namespace}`, {
+                        native: {
+                            savedTokens: JSON.stringify(tokens),
+                            authCode: "" 
+                        }
+                    });
+                    
+                    // The adapter will usually restart automatically after config change.
+                    // If not, we can proceed using the new tokens in memory.
+                    savedTokensJson = JSON.stringify(tokens);
+                }
+            } catch (e) {
+                this.log.error('Failed to exchange Auth Code for Tokens: ' + e.message);
+                // We do NOT return here, we fall through to try initialization 
+                // in case the old tokens were still valid.
+            }
+        }
+        // --------------------------------
 
         if (!credentialsJson || !savedTokensJson) {
-            this.log.warn('Missing Credentials or Tokens. Waiting for configuration via Admin Settings...');
-            // Do NOT return/crash here. We must stay alive to receive the 'exchangeCode' message from Admin.
-            return; 
+            this.log.warn('Missing Credentials or Tokens. Please configure via Admin Settings.');
+            return;
         }
 
         try {
             const keys = JSON.parse(credentialsJson);
             const tokens = JSON.parse(savedTokensJson);
-
-            // Robust check for installed vs web client structure
             const clientConfig = keys.installed || keys.web;
-            if (!clientConfig) {
-                this.log.error('Invalid credentials.json format. Missing "installed" or "web" property.');
-                return;
-            }
 
             const config = {
                 auth: {
@@ -88,18 +110,12 @@ class GoogleBroadcast extends utils.Adapter {
                     isNew: true,
                     lang: 'en-US',
                     deviceModelId: this.config.deviceModelId || 'iobroker-model',
-                    deviceLocation: {
-                        coordinates: {
-                            latitude: 0,
-                            longitude: 0
-                        }
-                    }
+                    deviceLocation: { coordinates: { latitude: 0, longitude: 0 } }
                 }
             };
 
             this.assistant = new GoogleAssistant(config.auth);
             
-            // In v0.7.0 we listen to 'ready' on the assistant object itself
             this.assistant.on('ready', () => {
                 this.log.info('Google Assistant SDK ready.');
                 this.setState('info.connection', true, true);
@@ -112,13 +128,9 @@ class GoogleBroadcast extends utils.Adapter {
 
         } catch (e) {
             this.log.error('Failed to initialize Google Assistant: ' + e.message);
-            this.setState('info.connection', false, true);
         }
     }
 
-    /**
-     * Send text command to Assistant
-     */
     sendBroadcast(textCommand) {
         if (!this.assistant) {
             this.log.error('Assistant not initialized. Cannot broadcast.');
@@ -130,12 +142,7 @@ class GoogleBroadcast extends utils.Adapter {
                 textQuery: textCommand,
                 isNew: true,
                 deviceModelId: this.config.deviceModelId,
-                deviceLocation: {
-                    coordinates: {
-                        latitude: 0,
-                        longitude: 0
-                    }
-                }
+                deviceLocation: { coordinates: { latitude: 0, longitude: 0 } }
             }
         };
 
@@ -144,23 +151,13 @@ class GoogleBroadcast extends utils.Adapter {
         try {
             this.assistant.start(config.conversation, (conversation) => {
                 conversation
-                    .on('audio-data', (data) => {
-                        // Optional: Handle audio response
-                    })
-                    .on('end-of-utterance', () => {
-                        this.log.debug('Google Assistant: End of utterance');
-                    })
+                    .on('audio-data', (data) => {})
+                    .on('end-of-utterance', () => {})
                     .on('transcription', (data) => {
                         this.log.debug('Google Transcription: ' + (data.transcription || data));
                     })
                     .on('response', (text) => {
                         if (text) this.log.debug('Google Text Response: ' + text);
-                    })
-                    .on('volume-percent', (percent) => {
-                        // Ignore volume changes
-                    })
-                    .on('device-action', (action) => {
-                        // Ignore device actions
                     })
                     .on('ended', (error, continueConversation) => {
                         if (error) {
@@ -178,9 +175,6 @@ class GoogleBroadcast extends utils.Adapter {
         }
     }
 
-    /**
-     * Initialize mDNS listener
-     */
     initMdns() {
         try {
             this.mdns = mDNS();
@@ -192,9 +186,6 @@ class GoogleBroadcast extends utils.Adapter {
         }
     }
 
-    /**
-     * Trigger a network scan
-     */
     scanNetwork() {
         this.log.info('Scanning for Google Cast devices...');
         if (this.mdns) {
@@ -207,16 +198,11 @@ class GoogleBroadcast extends utils.Adapter {
         }
     }
 
-    /**
-     * Process mDNS packets to find devices/groups
-     */
     async processMdnsResponse(response) {
         const records = [...response.answers, ...response.additionals];
-        
         let friendlyName = null;
         let modelDescription = null;
 
-        // Extract TXT fields
         const txtRecord = records.find(r => r.type === 'TXT' && r.name.includes('_googlecast'));
         if (txtRecord && txtRecord.data) {
             const dataParts = [];
@@ -236,22 +222,14 @@ class GoogleBroadcast extends utils.Adapter {
 
         if (!friendlyName) return;
 
-        // Normalize ID
         const cleanId = friendlyName.replace(/[^a-zA-Z0-9_-]/g, '_');
-        
-        // Determine if Group or Device
         const isGroup = (modelDescription === 'Google Cast Group');
         const folder = isGroup ? 'groups' : 'devices';
         
-        // Create Objects
         await this.setObjectNotExistsAsync(`${folder}.${cleanId}`, {
             type: 'device',
-            common: {
-                name: friendlyName
-            },
-            native: {
-                model: modelDescription
-            }
+            common: { name: friendlyName },
+            native: { model: modelDescription }
         });
 
         await this.setObjectNotExistsAsync(`${folder}.${cleanId}.broadcast`, {
@@ -263,82 +241,36 @@ class GoogleBroadcast extends utils.Adapter {
                 read: true,
                 write: true
             },
-            native: {
-                friendlyName: friendlyName
-            }
+            native: { friendlyName: friendlyName }
         });
         
         this.subscribeStates(`${folder}.${cleanId}.broadcast`);
     }
 
-    /**
-     * Is called when state changes
-     */
     async onStateChange(id, state) {
         if (state && !state.ack) {
-            // ACK=false means command from user
-            
-            // 1. Broadcast All
             if (id.endsWith('broadcast_all')) {
                 const cmd = `Broadcast ${state.val}`;
                 this.sendBroadcast(cmd);
-                this.setState(id, state.val, true); // Ack
+                this.setState(id, state.val, true); 
             }
-            
-            // 2. Specific Device/Group
             else if (id.includes('.devices.') || id.includes('.groups.')) {
                 const obj = await this.getObjectAsync(id);
                 if (obj && obj.native && obj.native.friendlyName) {
                     const target = obj.native.friendlyName;
                     const cmd = `Broadcast to ${target} ${state.val}`;
                     this.sendBroadcast(cmd);
-                    this.setState(id, state.val, true); // Ack
+                    this.setState(id, state.val, true);
                 }
             }
         }
     }
 
-    /**
-     * Admin UI Messages
-     */
     async onMessage(obj) {
         if (typeof obj === 'object' && obj.message) {
             if (obj.command === 'scan') {
                 this.scanNetwork();
                 if (obj.callback) this.sendTo(obj.from, obj.command, { result: 'Scan started' }, obj.callback);
-            }
-            
-            // OAUTH FLOW HELPER
-            if (obj.command === 'getAuthUrl') {
-                // This is legacy/backup, as we now generate link in frontend
-                const creds = obj.message;
-                try {
-                     const url = `https://accounts.google.com/o/oauth2/v2/auth?access_type=offline&scope=https%3A%2F%2Fwww.googleapis.com%2Fauth%2Fassistant-sdk-prototype&response_type=code&client_id=${creds.client_id}&redirect_uri=urn:ietf:wg:oauth:2.0:oob`;
-                     this.sendTo(obj.from, obj.command, { url: url }, obj.callback);
-                } catch (e) {
-                    this.log.error(e);
-                }
-            }
-
-            if (obj.command === 'exchangeCode') {
-                const { code, clientId, clientSecret } = obj.message;
-                
-                // Need to import google here if not global, or ensure it is required at top
-                // const google = require('googleapis').google; 
-                
-                const oauth2Client = new google.auth.OAuth2(
-                    clientId,
-                    clientSecret,
-                    'urn:ietf:wg:oauth:2.0:oob'
-                );
-
-                try {
-                    const { tokens } = await oauth2Client.getToken(code);
-                    this.sendTo(obj.from, obj.command, { tokens: tokens }, obj.callback);
-                } catch (e) {
-                     this.log.error("Error exchanging code: " + e);
-                     this.sendTo(obj.from, obj.command, { error: e.message }, obj.callback);
-                }
             }
         }
     }
