@@ -126,7 +126,25 @@
                 $sel.append('<option value="' + savedIp + '" selected>' + savedIp + ' (Saved)</option>');
             }
 
-            $sel.formSelect();
+            // --- FIXED: Safe Materialize CSS Initialization ---
+            try {
+                if (typeof M !== 'undefined' && M.FormSelect && M.FormSelect.init) {
+                    // Modern Materialize (Vanilla JS)
+                    M.FormSelect.init($sel[0]);
+                } else if ($sel.formSelect) {
+                    // Modern Materialize (jQuery wrapper)
+                    $sel.formSelect();
+                } else if ($sel.material_select) {
+                    // Legacy Materialize
+                    $sel.material_select();
+                } else {
+                    console.warn('GoogleBroadcast: No Select initialization method found (formSelect/material_select).');
+                }
+            } catch (e) {
+                console.error('GoogleBroadcast: Error initializing select:', e);
+            }
+            // --------------------------------------------------
+
             $sel.on('change', function() {
                 // Trigger change event manually since we rebuilt the select
                 if (typeof onChange === 'function') onChange();
