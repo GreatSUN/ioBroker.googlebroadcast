@@ -1,8 +1,50 @@
-"native": {
+{
+  "common": {
+    "name": "googlebroadcast",
+    "version": "0.0.1",
+    "news": {
+      "0.0.1": {
+        "en": "initial release"
+      }
+    },
+    "title": "Google Assistant Broadcast",
+    "desc": {
+      "en": "Broadcasts text messages via Google Assistant SDK"
+    },
+    "authors": [
+      "User"
+    ],
+    "keywords": [
+      "ioBroker",
+      "google",
+      "assistant",
+      "broadcast"
+    ],
+    "platform": "Javascript/Node.js",
+    "main": "main.js",
+    "icon": "googlebroadcast.png",
+    "enabled": true,
+    "extIcon": "https://raw.githubusercontent.com/GreatSUN/iobroker.googlebroadcast/master/admin/googlebroadcast.png",
+    "readme": "https://github.com/GreatSUN/iobroker.googlebroadcast/blob/master/README.md",
+    "loglevel": "info",
+    "mode": "daemon",
+    "type": "multimedia",
+    "compact": true,
+    "connectionType": "cloud",
+    "dataSource": "push",
+    "materialize": true,
+    "dependencies": [
+      {
+        "js-controller": ">=3.2.0"
+      }
+    ]
+  },
+  "native": {
     "jsonCredentials": "",
     "deviceModelId": "iobroker-model",
     "scanInterval": 30
   },
+  "objects": [],
   "instanceObjects": [
     {
       "_id": "broadcast_all",
@@ -12,7 +54,8 @@
         "type": "string",
         "role": "text",
         "read": true,
-        "write": true
+        "write": true,
+        "def": ""
       },
       "native": {}
     },
@@ -21,11 +64,11 @@
       "type": "state",
       "common": {
         "name": "Google OAuth Tokens",
-        "type": "json",
-        "role": "state",
+        "type": "string",
+        "role": "value",
         "read": true,
         "write": true,
-        "def": "{}" 
+        "def": "{}"
       },
       "native": {}
     },
@@ -51,3 +94,4 @@
       "native": {}
     }
   ]
+}

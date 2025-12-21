@@ -23,14 +23,16 @@ class GoogleBroadcast extends utils.Adapter {
         this.assistant = null;
         this.mdns = null;
         this.scanInterval = null;
-        
-        // Define paths for temporary files
-        this.credsPath = path.join(os.tmpdir(), `iobroker_google_${this.instance}_creds.json`);
-        this.tokensPath = path.join(os.tmpdir(), `iobroker_google_${this.instance}_tokens.json`);
+        this.credsPath = null;
+        this.tokensPath = null;
     }
 
     async onReady() {
-        // 1. Try Initialize (Will wait if no tokens in state)
+        // Define paths safely here
+        this.credsPath = path.join(os.tmpdir(), `iobroker_google_${this.namespace}_creds.json`);
+        this.tokensPath = path.join(os.tmpdir(), `iobroker_google_${this.namespace}_tokens.json`);
+
+        // 1. Try Initialize
         await this.initGoogleAssistant();
 
         // 2. Initialize mDNS
@@ -51,15 +53,14 @@ class GoogleBroadcast extends utils.Adapter {
     async initGoogleAssistant() {
         const credentialsJson = this.config.jsonCredentials;
         
-        // Get tokens from STATE, not config
+        // Read tokens from STATE
         const tokenState = await this.getStateAsync('tokens');
         let tokensJson = tokenState && tokenState.val ? tokenState.val : null;
 
-        // If tokens are object, stringify
         if (typeof tokensJson === 'object') tokensJson = JSON.stringify(tokensJson);
 
         if (!credentialsJson || !tokensJson || tokensJson === '{}') {
-            this.log.warn('Adapter waiting for authentication. Please use the "Generate Tokens" button in Admin.');
+            this.log.warn('Adapter waiting for authentication. Please open Admin and use "Generate Tokens".');
             this.setState('info.connection', false, true);
             return;
         }
@@ -82,7 +83,7 @@ class GoogleBroadcast extends utils.Adapter {
                 }
             };
 
-            // If we are re-initializing, clean up old instance
+            // Cleanup old instance if exists
             if (this.assistant) {
                 this.assistant.removeAllListeners();
                 this.assistant = null;
@@ -114,7 +115,6 @@ class GoogleBroadcast extends utils.Adapter {
                 if (obj.callback) this.sendTo(obj.from, obj.command, { result: 'OK' }, obj.callback);
             }
             
-            // --- NEW AUTH FLOW ---
             if (obj.command === 'exchangeCode') {
                 const { code, clientId, clientSecret } = obj.message;
                 const oauth2Client = new google.auth.OAuth2(
@@ -127,14 +127,14 @@ class GoogleBroadcast extends utils.Adapter {
                     const { tokens } = await oauth2Client.getToken(code);
                     this.log.info('Tokens generated successfully via Admin!');
                     
-                    // 1. Save tokens to STATE (No restart triggered)
+                    // Save to STATE (Instant, no restart)
                     await this.setStateAsync('tokens', JSON.stringify(tokens), true);
                     
-                    // 2. Initialize immediately
+                    // Initialize immediately
                     await this.initGoogleAssistant();
 
-                    // 3. Tell Admin it worked
-                    this.sendTo(obj.from, obj.command, { tokens: tokens }, obj.callback);
+                    // Reply success
+                    this.sendTo(obj.from, obj.command, { success: true }, obj.callback);
                 } catch (e) {
                      this.log.error("Auth Exchange Error: " + e);
                      this.sendTo(obj.from, obj.command, { error: e.message }, obj.callback);
@@ -148,7 +148,6 @@ class GoogleBroadcast extends utils.Adapter {
             this.log.warn('Cannot broadcast: Assistant not ready.');
             return;
         }
-        // ... (Existing broadcast logic remains same) ...
         const config = {
             conversation: {
                 textQuery: textCommand,
@@ -165,7 +164,6 @@ class GoogleBroadcast extends utils.Adapter {
         });
     }
 
-    // ... (mDNS logic remains same) ...
     initMdns() {
         try {
             this.mdns = mDNS();
@@ -178,7 +176,6 @@ class GoogleBroadcast extends utils.Adapter {
     }
 
     async processMdnsResponse(response) {
-        // ... (Keep existing parsing logic) ...
         const records = [...response.answers, ...response.additionals];
         let friendlyName = null;
         let modelDescription = null;
@@ -238,9 +235,9 @@ class GoogleBroadcast extends utils.Adapter {
         try {
             if (this.scanInterval) clearInterval(this.scanInterval);
             if (this.mdns) this.mdns.destroy();
-            // Cleanup temp files
-            if (fs.existsSync(this.credsPath)) fs.unlinkSync(this.credsPath);
-            if (fs.existsSync(this.tokensPath)) fs.unlinkSync(this.tokensPath);
+            // Optional: cleanup temp files
+            if (this.credsPath && fs.existsSync(this.credsPath)) fs.unlinkSync(this.credsPath);
+            if (this.tokensPath && fs.existsSync(this.tokensPath)) fs.unlinkSync(this.tokensPath);
             callback();
         } catch (e) {
             callback();

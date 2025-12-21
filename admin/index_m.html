@@ -49,10 +49,10 @@
                 }
             });
 
-            // 2. Exchange Code (Send Message to Adapter)
+            // 2. Exchange Code
             $('#btn_exchange').on('click', function() {
                 var code = $('#authCode').val();
-                var json = $('#jsonCredentials').val(); // Used locally for Client ID
+                var json = $('#jsonCredentials').val();
                 
                 if (!json) { alert('Missing credentials'); return; }
                 if (!code) { alert('Missing code'); return; }
@@ -65,10 +65,9 @@
                     clientId: keys.client_id,
                     clientSecret: keys.client_secret
                 }, function(res) {
-                    if(res && res.tokens) {
-                        M.toast({html: 'Tokens generated! Adapter connecting...'});
-                        // Clear the code input for security
-                        $('#authCode').val('');
+                    if(res && res.success) {
+                        M.toast({html: 'Success! Tokens saved. Adapter is connecting...'});
+                        $('#authCode').val(''); // Clear code for security
                     } else {
                         alert('Error: ' + ((res && res.error) ? res.error : 'Unknown error'));
                     }
