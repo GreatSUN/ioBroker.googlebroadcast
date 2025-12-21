@@ -218,12 +218,10 @@ class GoogleBroadcast extends utils.Adapter {
     async processMdnsResponse(response) {
         const records = [...response.answers, ...response.additionals];
         
-        // 1. Find PTR record
         const ptr = records.find(r => r.type === 'PTR' && r.name === '_googlecast._tcp.local');
         if (!ptr) return;
         const instanceName = ptr.data;
 
-        // 2. Find TXT record (Friendly Name)
         let friendlyName = null;
         let model = null;
         const txt = records.find(r => r.type === 'TXT' && r.name === instanceName);
@@ -235,15 +233,12 @@ class GoogleBroadcast extends utils.Adapter {
             });
         }
 
-        // 3. Find SRV record (Hostname & Port)
         const srv = records.find(r => r.type === 'SRV' && r.name === instanceName);
         if (!srv) return;
         
         const port = srv.data.port;
-        const targetHost = srv.data.target; // e.g. "Google-Home-123.local"
+        const targetHost = srv.data.target;
 
-        // 4. Find A record (IP)
-        // Normalize names for comparison (lowercase, remove trailing dots)
         const normalize = (name) => name ? name.toLowerCase().replace(/\.$/, '') : '';
         const cleanTarget = normalize(targetHost);
 
@@ -252,29 +247,23 @@ class GoogleBroadcast extends utils.Adapter {
 
         if (!friendlyName) return;
 
-        // Debug log to trace what we found
-        this.log.debug(`Found Cast Device: ${friendlyName} | Host: ${targetHost} | IP: ${ip || 'MISSING'}`);
-
         const cleanId = friendlyName.replace(/[^a-zA-Z0-9_-]/g, '_');
         const isGroup = (model === 'Google Cast Group');
         const folder = isGroup ? 'groups' : 'devices';
         
-        // Create Device Object (saving IP in native as well)
+        // Save Device with IP
         await this.setObjectNotExistsAsync(`${folder}.${cleanId}`, {
             type: 'device',
             common: { name: friendlyName },
             native: { model: model, ip: ip, port: port }
         });
         
-        // Update IP in native if changed (silent update)
         if (ip) {
             await this.extendObjectAsync(`${folder}.${cleanId}`, {
                 native: { ip: ip, port: port }
             });
         }
 
-        // --- NEW: CREATE VISIBLE STATES ---
-        // Address
         await this.setObjectNotExistsAsync(`${folder}.${cleanId}.address`, {
             type: 'state',
             common: { name: 'IP Address', type: 'string', role: 'info.ip', read: true, write: false, def: '' },
@@ -282,14 +271,12 @@ class GoogleBroadcast extends utils.Adapter {
         });
         if (ip) await this.setStateAsync(`${folder}.${cleanId}.address`, ip, true);
 
-        // Port
         await this.setObjectNotExistsAsync(`${folder}.${cleanId}.port`, {
             type: 'state',
             common: { name: 'Port', type: 'number', role: 'info.port', read: true, write: false, def: 8009 },
             native: {}
         });
         if (port) await this.setStateAsync(`${folder}.${cleanId}.port`, port, true);
-        // ----------------------------------
 
         await this.setObjectNotExistsAsync(`${folder}.${cleanId}.broadcast`, {
             type: 'state',
@@ -311,39 +298,54 @@ class GoogleBroadcast extends utils.Adapter {
     async onStateChange(id, state) {
         if (state && !state.ack && state.val) {
             
+            // Broadcast All
             if (id.endsWith('broadcast_all')) {
                 const lang = this.config.language || 'en-US';
                 if (this.config.broadcastMode === 'cast') {
+                    // CAST MODE: Loop through DEVICES to get IPs
+                    // Note: We scan the 'devices' folder to find all IPs
                     const devices = await this.getDevicesAsync();
                     for (const dev of devices) {
-                        // Read IP from native (or state)
-                        if (dev.native && dev.native.ip) {
+                         // Ensure we have the IP from the parent device object
+                         if (dev.native && dev.native.ip) {
                             this.castTTS(dev.native.ip, state.val, lang);
                         }
                     }
                 } else {
+                    // ASSISTANT MODE
                     let cmd = lang.startsWith('de') ? `Nachricht an alle ${state.val}` : `Broadcast ${state.val}`;
                     this.sendBroadcast(cmd, lang);
                 }
                 this.setState(id, null, true);
             } 
             
+            // Specific Device
             else if (id.includes('.broadcast')) {
-                const obj = await this.getObjectAsync(id);
-                if (obj && obj.native && obj.native.friendlyName) {
+                // Fetch the State Object (to get FriendlyName)
+                const stateObj = await this.getObjectAsync(id);
+                
+                // Fetch the Parent Device Object (to get IP)
+                // ID format: adapter.0.devices.Living_Room.broadcast
+                // Parent:    adapter.0.devices.Living_Room
+                const deviceId = id.substring(0, id.lastIndexOf('.'));
+                const deviceObj = await this.getObjectAsync(deviceId);
+
+                if (stateObj && stateObj.native && stateObj.native.friendlyName) {
                     
                     const langId = id.replace('.broadcast', '.language');
                     const langState = await this.getStateAsync(langId);
                     const lang = (langState && langState.val) ? langState.val : (this.config.language || 'en-US');
                     
                     if (this.config.broadcastMode === 'cast') {
-                        if (obj.native.ip) {
-                            this.castTTS(obj.native.ip, state.val, lang);
+                        // Check IP on the PARENT Device Object
+                        if (deviceObj && deviceObj.native && deviceObj.native.ip) {
+                            this.castTTS(deviceObj.native.ip, state.val, lang);
                         } else {
-                            this.log.warn(`Cannot Cast to ${obj.native.friendlyName}: IP missing.`);
+                            this.log.warn(`Cannot Cast to ${stateObj.native.friendlyName}: IP missing in device object.`);
                         }
                     } else {
-                        const target = obj.native.friendlyName;
+                        // Assistant Mode (Using friendly name from state is fine)
+                        const target = stateObj.native.friendlyName;
                         let cmd = lang.startsWith('en') ? `Broadcast to ${target} ${state.val}` : `Broadcast ${state.val}`;
                         this.sendBroadcast(cmd, lang);
                     }
