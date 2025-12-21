@@ -177,6 +177,11 @@ class GoogleBroadcast extends utils.Adapter {
             const client = new Client();
             
             client.connect(deviceIp, () => {
+                // Use DefaultMediaReceiver - this is standard for Audio too.
+                // If NOT_ALLOWED occurs, it usually means we need to handle the session differently or retry.
+                // However, for pure audio, we can try avoiding the "Launch" if a session is active, 
+                // but launch is the safest standard way.
+                
                 client.launch(DefaultMediaReceiver, (err, player) => {
                     if (err) {
                         this.log.error('Cast Launch Error: ' + err);
@@ -186,18 +191,28 @@ class GoogleBroadcast extends utils.Adapter {
                     const media = {
                         contentId: url,
                         contentType: 'audio/mp3',
-                        streamType: 'BUFFERED'
+                        streamType: 'BUFFERED' // Important for MP3 streams
                     };
+                    
                     player.load(media, { autoplay: true }, (err, status) => {
-                        if (err) this.log.error('Cast Load Error: ' + err);
+                        if (err) {
+                            this.log.error('Cast Load Error: ' + err);
+                        } else {
+                            this.log.debug('Playback started.');
+                        }
                         client.close();
                     });
                 });
             });
+            
             client.on('error', (err) => {
-                this.log.error('Cast Error: ' + err);
-                client.close();
+                // Suppress common socket errors that happen during close
+                if (err.message && !err.message.includes('closed')) {
+                    this.log.error('Cast Client Error: ' + err);
+                }
+                try { client.close(); } catch(e) {}
             });
+            
         } catch (e) {
             this.log.error('TTS Generation Error: ' + e.message);
         }
@@ -302,17 +317,13 @@ class GoogleBroadcast extends utils.Adapter {
             if (id.endsWith('broadcast_all')) {
                 const lang = this.config.language || 'en-US';
                 if (this.config.broadcastMode === 'cast') {
-                    // CAST MODE: Loop through DEVICES to get IPs
-                    // Note: We scan the 'devices' folder to find all IPs
                     const devices = await this.getDevicesAsync();
                     for (const dev of devices) {
-                         // Ensure we have the IP from the parent device object
-                         if (dev.native && dev.native.ip) {
+                        if (dev.native && dev.native.ip) {
                             this.castTTS(dev.native.ip, state.val, lang);
                         }
                     }
                 } else {
-                    // ASSISTANT MODE
                     let cmd = lang.startsWith('de') ? `Nachricht an alle ${state.val}` : `Broadcast ${state.val}`;
                     this.sendBroadcast(cmd, lang);
                 }
@@ -321,30 +332,22 @@ class GoogleBroadcast extends utils.Adapter {
             
             // Specific Device
             else if (id.includes('.broadcast')) {
-                // Fetch the State Object (to get FriendlyName)
-                const stateObj = await this.getObjectAsync(id);
-                
-                // Fetch the Parent Device Object (to get IP)
-                // ID format: adapter.0.devices.Living_Room.broadcast
-                // Parent:    adapter.0.devices.Living_Room
                 const deviceId = id.substring(0, id.lastIndexOf('.'));
                 const deviceObj = await this.getObjectAsync(deviceId);
+                const stateObj = await this.getObjectAsync(id);
 
                 if (stateObj && stateObj.native && stateObj.native.friendlyName) {
-                    
                     const langId = id.replace('.broadcast', '.language');
                     const langState = await this.getStateAsync(langId);
                     const lang = (langState && langState.val) ? langState.val : (this.config.language || 'en-US');
                     
                     if (this.config.broadcastMode === 'cast') {
-                        // Check IP on the PARENT Device Object
                         if (deviceObj && deviceObj.native && deviceObj.native.ip) {
                             this.castTTS(deviceObj.native.ip, state.val, lang);
                         } else {
-                            this.log.warn(`Cannot Cast to ${stateObj.native.friendlyName}: IP missing in device object.`);
+                            this.log.warn(`Cannot Cast to ${stateObj.native.friendlyName}: IP missing.`);
                         }
                     } else {
-                        // Assistant Mode (Using friendly name from state is fine)
                         const target = stateObj.native.friendlyName;
                         let cmd = lang.startsWith('en') ? `Broadcast to ${target} ${state.val}` : `Broadcast ${state.val}`;
                         this.sendBroadcast(cmd, lang);
