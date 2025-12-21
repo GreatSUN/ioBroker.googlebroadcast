@@ -3,10 +3,15 @@
 const utils = require('@iobroker/adapter-core');
 const GoogleAssistant = require('google-assistant');
 const mDNS = require('multicast-dns');
-const google = require('googleapis').google; 
+const { google } = require('googleapis');
+const fs = require('fs');
+const path = require('path');
 
 class GoogleBroadcast extends utils.Adapter {
 
+    /**
+     * @param {Partial<utils.AdapterOptions>} [options={}]
+     */
     constructor(options) {
         super({
             ...options,
@@ -20,10 +25,17 @@ class GoogleBroadcast extends utils.Adapter {
         this.assistant = null;
         this.mdns = null;
         this.scanInterval = null;
+        
+        // Define paths for the temporary files the library needs
+        this.credsPath = path.join(__dirname, 'credentials.json');
+        this.tokensPath = path.join(__dirname, 'tokens.json');
     }
 
+    /**
+     * Is called when databases are connected and adapter received configuration.
+     */
     async onReady() {
-        // 1. Initialize Google Assistant Connection
+        // 1. Initialize Google Assistant
         await this.initGoogleAssistant();
 
         // 2. Initialize mDNS Scanner
@@ -41,20 +53,23 @@ class GoogleBroadcast extends utils.Adapter {
         // 4. Initial Scan
         this.scanNetwork();
 
+        // 5. Subscribe
         this.subscribeStates('broadcast_all');
         this.subscribeStates('devices.*.broadcast');
         this.subscribeStates('groups.*.broadcast');
     }
 
+    /**
+     * Initialize the Google Assistant SDK
+     */
     async initGoogleAssistant() {
         const credentialsJson = this.config.jsonCredentials;
         let savedTokensJson = this.config.savedTokens;
         const authCode = this.config.authCode;
 
-        // --- NEW: AUTO-EXCHANGE LOGIC ---
-        // If we have credentials and a code, but no tokens (or user pasted a new code), try to exchange it.
+        // --- AUTO-EXCHANGE LOGIC ---
         if (credentialsJson && authCode) {
-            this.log.info('Auth Code detected in configuration. Attempting to generate tokens...');
+            this.log.info('Auth Code detected. Attempting to generate tokens...');
             try {
                 const keys = JSON.parse(credentialsJson);
                 const clientConfig = keys.installed || keys.web;
@@ -67,9 +82,9 @@ class GoogleBroadcast extends utils.Adapter {
                     );
 
                     const { tokens } = await oauth2Client.getToken(authCode);
-                    this.log.info('Tokens generated successfully! Saving to configuration...');
+                    this.log.info('Tokens generated successfully! Saving configuration...');
 
-                    // Save new tokens and clear the code so we don't try again
+                    // Save new tokens and clear code
                     await this.extendForeignObjectAsync(`system.adapter.${this.namespace}`, {
                         native: {
                             savedTokens: JSON.stringify(tokens),
@@ -77,40 +92,42 @@ class GoogleBroadcast extends utils.Adapter {
                         }
                     });
                     
-                    // The adapter will usually restart automatically after config change.
-                    // If not, we can proceed using the new tokens in memory.
-                    savedTokensJson = JSON.stringify(tokens);
+                    // Stop here. The adapter will restart automatically due to config change.
+                    // This prevents race conditions.
+                    return; 
                 }
             } catch (e) {
-                this.log.error('Failed to exchange Auth Code for Tokens: ' + e.message);
-                // We do NOT return here, we fall through to try initialization 
-                // in case the old tokens were still valid.
+                this.log.error('Failed to exchange Auth Code: ' + e.message);
             }
         }
-        // --------------------------------
 
         if (!credentialsJson || !savedTokensJson) {
-            this.log.warn('Missing Credentials or Tokens. Please configure via Admin Settings.');
+            this.log.warn('Missing Credentials or Tokens. Waiting for Admin configuration...');
             return;
         }
 
         try {
-            const keys = JSON.parse(credentialsJson);
-            const tokens = JSON.parse(savedTokensJson);
-            const clientConfig = keys.installed || keys.web;
-
+            // --- WRITE FILES TO DISK ---
+            // The library REQUIRES files, so we create them from our DB config
+            fs.writeFileSync(this.credsPath, credentialsJson);
+            fs.writeFileSync(this.tokensPath, savedTokensJson);
+            
             const config = {
                 auth: {
-                    type: 'authorized_user',
-                    client_id: clientConfig.client_id,
-                    client_secret: clientConfig.client_secret,
-                    refresh_token: tokens.refresh_token,
+                    // Point the library to the files we just wrote
+                    keyFilePath: this.credsPath,
+                    savedTokensPath: this.tokensPath,
                 },
                 conversation: {
                     isNew: true,
                     lang: 'en-US',
                     deviceModelId: this.config.deviceModelId || 'iobroker-model',
-                    deviceLocation: { coordinates: { latitude: 0, longitude: 0 } }
+                    deviceLocation: {
+                        coordinates: {
+                            latitude: 0,
+                            longitude: 0
+                        }
+                    }
                 }
             };
 
@@ -121,16 +138,24 @@ class GoogleBroadcast extends utils.Adapter {
                 this.setState('info.connection', true, true);
             });
             
+            // v0.7.0 error handling
             this.assistant.on('error', (err) => {
-                this.log.error('Google Assistant Error: ' + err);
+                this.log.error('Google Assistant Connection Error: ' + err);
                 this.setState('info.connection', false, true);
             });
+            
+            // Start the library (it triggers the 'ready' event)
+            this.assistant.start();
 
         } catch (e) {
             this.log.error('Failed to initialize Google Assistant: ' + e.message);
+            this.setState('info.connection', false, true);
         }
     }
 
+    /**
+     * Send text command to Assistant
+     */
     sendBroadcast(textCommand) {
         if (!this.assistant) {
             this.log.error('Assistant not initialized. Cannot broadcast.');
@@ -175,6 +200,9 @@ class GoogleBroadcast extends utils.Adapter {
         }
     }
 
+    /**
+     * Initialize mDNS listener
+     */
     initMdns() {
         try {
             this.mdns = mDNS();
@@ -186,6 +214,9 @@ class GoogleBroadcast extends utils.Adapter {
         }
     }
 
+    /**
+     * Trigger a network scan
+     */
     scanNetwork() {
         this.log.info('Scanning for Google Cast devices...');
         if (this.mdns) {
@@ -198,6 +229,9 @@ class GoogleBroadcast extends utils.Adapter {
         }
     }
 
+    /**
+     * Process mDNS packets to find devices/groups
+     */
     async processMdnsResponse(response) {
         const records = [...response.answers, ...response.additionals];
         let friendlyName = null;
@@ -247,6 +281,9 @@ class GoogleBroadcast extends utils.Adapter {
         this.subscribeStates(`${folder}.${cleanId}.broadcast`);
     }
 
+    /**
+     * Is called when state changes
+     */
     async onStateChange(id, state) {
         if (state && !state.ack) {
             if (id.endsWith('broadcast_all')) {
@@ -266,19 +303,47 @@ class GoogleBroadcast extends utils.Adapter {
         }
     }
 
+    /**
+     * Admin UI Messages
+     */
     async onMessage(obj) {
         if (typeof obj === 'object' && obj.message) {
             if (obj.command === 'scan') {
                 this.scanNetwork();
                 if (obj.callback) this.sendTo(obj.from, obj.command, { result: 'Scan started' }, obj.callback);
             }
+            // 'exchangeCode' is now handled via auto-detect on startup, 
+            // but we keep this listener if you ever want to revert to button-based logic.
+            if (obj.command === 'exchangeCode') {
+                const { code, clientId, clientSecret } = obj.message;
+                const oauth2Client = new google.auth.OAuth2(
+                    clientId,
+                    clientSecret,
+                    'urn:ietf:wg:oauth:2.0:oob'
+                );
+                try {
+                    const { tokens } = await oauth2Client.getToken(code);
+                    this.sendTo(obj.from, obj.command, { tokens: tokens }, obj.callback);
+                } catch (e) {
+                     this.log.error("Error exchanging code: " + e);
+                     this.sendTo(obj.from, obj.command, { error: e.message }, obj.callback);
+                }
+            }
         }
     }
 
+    /**
+     * Cleanup files on unload
+     */
     onUnload(callback) {
         try {
             if (this.scanInterval) clearInterval(this.scanInterval);
             if (this.mdns) this.mdns.destroy();
+            
+            // Optional: Clean up temp files
+            // if (fs.existsSync(this.credsPath)) fs.unlinkSync(this.credsPath);
+            // if (fs.existsSync(this.tokensPath)) fs.unlinkSync(this.tokensPath);
+            
             callback();
         } catch (e) {
             callback();
