@@ -1,14 +1,21 @@
 {
   "common": {
     "name": "googlebroadcast",
-    "version": "0.2.0",
+    "version": "0.2.1",
     "news": {
-      "0.0.2": {
-        "en": "Added language support and fixed double broadcasts"
+      "0.2.1": {
+        "en": "Extended/fixed language support for different device/assistant languages"
       },
       "0.2.0": {
+        "en": "Added language support and fixed double broadcasts"
+      },
+      "0.1.0": {
+        "en": "Beta release"
+      },
+      "0.0.1": {
         "en": "initial release"
       }
+
     },
     "title": "Google Assistant Broadcast",
     "desc": {

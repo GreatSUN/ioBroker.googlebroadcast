@@ -8,6 +8,14 @@ const fs = require('fs');
 const path = require('path');
 const os = require('os');
 
+// Command structure based on language
+const COMMAND_PREFIXES = {
+    'en': (target, text) => `Broadcast to ${target} ${text}`,
+    'de': (target, text) => `Sende an ${target} ${text}`,
+    // Fallback for others (defaulting to English structure often works best globally)
+    'default': (target, text) => `Broadcast to ${target} ${text}`
+};
+
 class GoogleBroadcast extends utils.Adapter {
 
     constructor(options) {
@@ -29,25 +37,18 @@ class GoogleBroadcast extends utils.Adapter {
     }
 
     async onReady() {
-        // Define paths safely
         this.credsPath = path.join(os.tmpdir(), `iobroker_google_${this.namespace}_creds.json`);
         this.tokensPath = path.join(os.tmpdir(), `iobroker_google_${this.namespace}_tokens.json`);
 
-        // 1. Initialize Assistant
         await this.initGoogleAssistant();
-
-        // 2. Initialize mDNS
         this.initMdns();
 
-        // 3. Periodic Scan
         const intervalMinutes = this.config.scanInterval || 30;
         if (intervalMinutes > 0) {
             this.scanInterval = setInterval(() => this.scanNetwork(), intervalMinutes * 60 * 1000);
         }
         this.scanNetwork();
 
-        // Subscribe to wildcards - THIS IS ENOUGH. 
-        // We do NOT subscribe again in scan results to avoid double triggers.
         this.subscribeStates('broadcast_all');
         this.subscribeStates('devices.*.broadcast');
         this.subscribeStates('groups.*.broadcast');
@@ -56,63 +57,49 @@ class GoogleBroadcast extends utils.Adapter {
     async initGoogleAssistant() {
         const credentialsJson = this.config.jsonCredentials;
         
-        // --- AUTH LOGIC START ---
+        // --- AUTH LOGIC ---
         const tokenState = await this.getStateAsync('tokens');
         let tokensJson = tokenState && tokenState.val ? tokenState.val : null;
         let tokensObj = null;
 
         if (tokensJson && typeof tokensJson === 'string' && tokensJson !== '{}') {
-            try {
-                tokensObj = JSON.parse(tokensJson);
-            } catch (e) {
-                this.log.warn('Stored tokens were invalid JSON. Ignoring.');
-            }
+            try { tokensObj = JSON.parse(tokensJson); } catch (e) { }
         }
 
         if (!tokensObj && this.config.authCode && credentialsJson) {
-            this.log.info('No tokens found, but Auth Code detected. Attempting exchange...');
+            this.log.info('Auth Code detected. Attempting exchange...');
             try {
                 const keys = JSON.parse(credentialsJson);
                 const clientConfig = keys.installed || keys.web;
-                
                 const oauth2Client = new google.auth.OAuth2(
-                    clientConfig.client_id,
-                    clientConfig.client_secret,
-                    'urn:ietf:wg:oauth:2.0:oob'
+                    clientConfig.client_id, clientConfig.client_secret, 'urn:ietf:wg:oauth:2.0:oob'
                 );
-
                 const { tokens } = await oauth2Client.getToken(this.config.authCode);
                 if (tokens) {
-                    this.log.info('Tokens generated successfully! Saving to State.');
+                    this.log.info('Tokens generated successfully!');
                     tokensObj = tokens;
                     tokensJson = JSON.stringify(tokens);
                     await this.setStateAsync('tokens', tokensJson, true);
                 }
             } catch (e) {
                 this.log.error('Failed to exchange Auth Code: ' + e.message);
-                this.log.info('Please generate a NEW code in Admin and Save again.');
             }
         }
 
         if (!credentialsJson || !tokensObj) {
-            this.log.warn('Adapter is not authenticated. Please go to Instance Settings, paste Credentials & Auth Code, and Save.');
+            this.log.warn('Adapter not authenticated. Please configure in Admin.');
             this.setState('info.connection', false, true);
             return;
         }
-        // --- AUTH LOGIC END ---
 
         try {
             fs.writeFileSync(this.credsPath, credentialsJson);
             fs.writeFileSync(this.tokensPath, tokensJson);
             
             const config = {
-                auth: {
-                    keyFilePath: this.credsPath,
-                    savedTokensPath: this.tokensPath,
-                },
+                auth: { keyFilePath: this.credsPath, savedTokensPath: this.tokensPath },
                 conversation: {
                     isNew: true,
-                    // Use Default Language from Config
                     lang: this.config.language || 'en-US', 
                     deviceModelId: this.config.deviceModelId || 'iobroker-model',
                     deviceLocation: { coordinates: { latitude: 0, longitude: 0 } }
@@ -159,7 +146,6 @@ class GoogleBroadcast extends utils.Adapter {
             return;
         }
 
-        // Use passed language, or config default, or fallback to en-US
         const finalLang = lang || this.config.language || 'en-US';
 
         const config = {
@@ -202,12 +188,7 @@ class GoogleBroadcast extends utils.Adapter {
         if (txtRecord && txtRecord.data) {
             const dataParts = [];
             let buf = txtRecord.data;
-            if (Array.isArray(buf)) {
-                 buf.forEach(b => {
-                     const str = b.toString();
-                     dataParts.push(str);
-                 });
-            }
+            if (Array.isArray(buf)) { buf.forEach(b => dataParts.push(b.toString())); }
             dataParts.forEach(part => {
                 if (part.startsWith('fn=')) friendlyName = part.substring(3);
                 if (part.startsWith('md=')) modelDescription = part.substring(3);
@@ -220,21 +201,18 @@ class GoogleBroadcast extends utils.Adapter {
         const isGroup = (modelDescription === 'Google Cast Group');
         const folder = isGroup ? 'groups' : 'devices';
         
-        // 1. Create Device Folder/Object
         await this.setObjectNotExistsAsync(`${folder}.${cleanId}`, {
             type: 'device',
             common: { name: friendlyName },
             native: { model: modelDescription }
         });
 
-        // 2. Create Broadcast State
         await this.setObjectNotExistsAsync(`${folder}.${cleanId}.broadcast`, {
             type: 'state',
             common: { name: `Broadcast to ${friendlyName}`, type: 'string', role: 'text', read: true, write: true },
             native: { friendlyName: friendlyName }
         });
 
-        // 3. Create Language State (New!)
         await this.setObjectNotExistsAsync(`${folder}.${cleanId}.language`, {
             type: 'state',
             common: { 
@@ -248,19 +226,20 @@ class GoogleBroadcast extends utils.Adapter {
             },
             native: {}
         });
-        
-        // Removed: this.subscribeStates(...) to prevent double broadcast
     }
 
     async onStateChange(id, state) {
-        if (state && !state.ack && state.val) { // Ensure value is not null/empty
+        if (state && !state.ack && state.val) {
             
             // 1. Broadcast All
             if (id.endsWith('broadcast_all')) {
-                const cmd = `Broadcast ${state.val}`;
-                // Use default global language
-                this.sendBroadcast(cmd, this.config.language);
-                // Clear state
+                const lang = this.config.language || 'en-US';
+                const prefix = lang.startsWith('de') ? 'Sende an alle' : 'Broadcast';
+                
+                // For "All", we just say "Broadcast [Text]" or "Sende an alle [Text]"
+                const cmd = `${prefix} ${state.val}`;
+                
+                this.sendBroadcast(cmd, lang);
                 this.setState(id, null, true);
             } 
             
@@ -269,17 +248,19 @@ class GoogleBroadcast extends utils.Adapter {
                 const obj = await this.getObjectAsync(id);
                 if (obj && obj.native && obj.native.friendlyName) {
                     
-                    // Determine language for this specific device
                     const langId = id.replace('.broadcast', '.language');
                     const langState = await this.getStateAsync(langId);
-                    const lang = (langState && langState.val) ? langState.val : this.config.language;
+                    const lang = (langState && langState.val) ? langState.val : (this.config.language || 'en-US');
+
+                    // Determine Command Structure
+                    // If language is 'de-DE', use 'de' prefix. Else default to 'en'.
+                    const shortLang = lang.split('-')[0]; 
+                    const builder = COMMAND_PREFIXES[shortLang] || COMMAND_PREFIXES['default'];
 
                     const target = obj.native.friendlyName;
-                    const cmd = `Broadcast to ${target} ${state.val}`;
+                    const cmd = builder(target, state.val);
                     
                     this.sendBroadcast(cmd, lang);
-                    
-                    // Clear state
                     this.setState(id, null, true);
                 }
             }
