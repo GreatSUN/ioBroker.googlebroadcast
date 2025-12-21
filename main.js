@@ -29,7 +29,7 @@ class GoogleBroadcast extends utils.Adapter {
      * Is called when databases are connected and adapter received configuration.
      */
     async onReady() {
-        // 1. Initialize Google Assistant Connection
+        // 1. Initialize Google Assistant Connection (Non-blocking)
         await this.initGoogleAssistant();
 
         // 2. Initialize mDNS Scanner
@@ -47,7 +47,7 @@ class GoogleBroadcast extends utils.Adapter {
         // 4. Initial Scan
         this.scanNetwork();
 
-        // 5. Subscribe to states
+        // 5. Subscribe to states (Always subscribe so we don't miss commands if auth comes later)
         this.subscribeStates('broadcast_all');
         this.subscribeStates('devices.*.broadcast');
         this.subscribeStates('groups.*.broadcast');
@@ -61,9 +61,9 @@ class GoogleBroadcast extends utils.Adapter {
         const savedTokensJson = this.config.savedTokens;
 
         if (!credentialsJson || !savedTokensJson) {
-            this.log.warn('Missing Google Credentials or Tokens. Please configure them in Adapter Settings.');
-            this.setState('info.connection', false, true);
-            return;
+            this.log.warn('Missing Credentials or Tokens. Waiting for configuration via Admin Settings...');
+            // Do NOT return/crash here. We must stay alive to receive the 'exchangeCode' message from Admin.
+            return; 
         }
 
         try {
@@ -87,7 +87,7 @@ class GoogleBroadcast extends utils.Adapter {
                 conversation: {
                     isNew: true,
                     lang: 'en-US',
-                    deviceModelId: this.config.deviceModelId || 'iobroker-broadcast-v1',
+                    deviceModelId: this.config.deviceModelId || 'iobroker-model',
                     deviceLocation: {
                         coordinates: {
                             latitude: 0,
@@ -310,7 +310,8 @@ class GoogleBroadcast extends utils.Adapter {
             
             // OAUTH FLOW HELPER
             if (obj.command === 'getAuthUrl') {
-                const creds = obj.message; // { client_id, client_secret, ... }
+                // This is legacy/backup, as we now generate link in frontend
+                const creds = obj.message;
                 try {
                      const url = `https://accounts.google.com/o/oauth2/v2/auth?access_type=offline&scope=https%3A%2F%2Fwww.googleapis.com%2Fauth%2Fassistant-sdk-prototype&response_type=code&client_id=${creds.client_id}&redirect_uri=urn:ietf:wg:oauth:2.0:oob`;
                      this.sendTo(obj.from, obj.command, { url: url }, obj.callback);
@@ -321,6 +322,10 @@ class GoogleBroadcast extends utils.Adapter {
 
             if (obj.command === 'exchangeCode') {
                 const { code, clientId, clientSecret } = obj.message;
+                
+                // Need to import google here if not global, or ensure it is required at top
+                // const google = require('googleapis').google; 
+                
                 const oauth2Client = new google.auth.OAuth2(
                     clientId,
                     clientSecret,

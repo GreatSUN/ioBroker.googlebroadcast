@@ -64,26 +64,20 @@
                 if (!json) { alert('Missing credentials'); return; }
                 if (!code) { alert('Missing code'); return; }
 
-                try {
-                    var creds = JSON.parse(json);
-                    var keys = creds.installed || creds.web;
-
-                    sendTo(null, 'exchangeCode', { 
-                        code: code,
-                        clientId: keys.client_id,
-                        clientSecret: keys.client_secret
-                    }, function(res) {
-                        if(res.tokens) {
-                            $('#savedTokens').val(JSON.stringify(res.tokens));
-                            onChange();
-                            M.toast({html: _('Tokens generated and saved!')});
-                        } else {
-                            alert(_('Error') + ': ' + (res.error || 'Unknown error'));
-                        }
-                    });
-                } catch (e) {
-                    alert('JSON Parse Error: ' + e);
-                }
+                // Send message to running adapter
+                sendTo(null, 'exchangeCode', { 
+                    code: code,
+                    clientId: JSON.parse(json).installed ? JSON.parse(json).installed.client_id : JSON.parse(json).web.client_id,
+                    clientSecret: JSON.parse(json).installed ? JSON.parse(json).installed.client_secret : JSON.parse(json).web.client_secret
+                }, function(res) {
+                    if(res && res.tokens) {
+                        $('#savedTokens').val(JSON.stringify(res.tokens));
+                        onChange();
+                        M.toast({html: _('Tokens generated and saved!')});
+                    } else {
+                        alert(_('Error') + ': ' + ((res && res.error) ? res.error : 'Unknown error'));
+                    }
+                });
             });
             
             // BUTTON: Scan
@@ -111,24 +105,26 @@
     <style>
         .section { margin-bottom: 20px; border-bottom: 1px solid #ccc; padding-bottom: 10px; }
         .step { font-weight: bold; color: #2196f3; }
+        
+        /* High contrast box for the link */
         .auth-link-box { 
-            background: #e3f2fd; 
-            color: #0d47a1 !important; /* Force dark text for visibility */
+            background-color: #1565c0 !important; /* Dark Blue */
+            color: #ffffff !important;            /* White Text */
             padding: 15px; 
             border-radius: 4px; 
             border: 1px solid #2196f3; 
             margin-top: 10px;
             text-align: center;
         }
+        
+        /* The link itself */
         .auth-link-box a {
-            font-size: 1.2em;
+            color: #ffca28 !important; /* Amber/Orange for high visibility */
+            font-size: 1.3em;
             font-weight: bold;
             text-decoration: underline;
-            color: #0d47a1 !important; /* Force dark link color */
-        }
-        /* Ensure the helper text inside the box is also readable */
-        .auth-link-box span {
-            color: #0d47a1 !important;
+            display: block;
+            margin-top: 5px;
         }
     </style>
 </head>
