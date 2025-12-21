@@ -196,19 +196,6 @@ class GoogleBroadcast extends utils.Adapter {
                 this.scanNetwork();
                 if (obj.callback) this.sendTo(obj.from, obj.command, { result: 'OK' }, obj.callback);
             }
-            // --- NEW: Handle Interface Request ---
-            if (obj.command === 'getInterfaces') {
-                const interfaces = os.networkInterfaces();
-                const result = [];
-                for (const name of Object.keys(interfaces)) {
-                    for (const iface of interfaces[name]) {
-                        if ('IPv4' === iface.family && !iface.internal) {
-                            result.push({ name: name, address: iface.address });
-                        }
-                    }
-                }
-                if (obj.callback) this.sendTo(obj.from, obj.command, { result: result }, obj.callback);
-            }
         }
     }
 

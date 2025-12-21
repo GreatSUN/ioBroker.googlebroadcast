@@ -28,29 +28,42 @@
                 }
             });
 
-            // LOAD INTERFACES DYNAMICALLY
-            sendTo(null, 'getInterfaces', {}, function (response) {
-                var $sel = $('#webServerIp');
-                var interfaces = (response && response.result) ? response.result : [];
-                
-                // Add Auto-detect option
-                $sel.append('<option value="">Auto-detect (Default)</option>');
-                
-                var found = false;
-                interfaces.forEach(function(iface) {
-                    var selected = (iface.address === settings.webServerIp) ? 'selected' : '';
-                    if (selected) found = true;
-                    $sel.append('<option value="' + iface.address + '" ' + selected + '>' + iface.name + ' - ' + iface.address + '</option>');
-                });
+            // LOAD INTERFACES DIRECTLY FROM HOST OBJECT (Works even if adapter is stopped)
+            // 1. Get the current instance info to find the host
+            socket.emit('getObject', 'system.adapter.' + adapter + '.' + instance, function (err, obj) {
+                if (!err && obj && obj.common && obj.common.host) {
+                    // 2. Get the host object containing network stats
+                    socket.emit('getObject', 'system.host.' + obj.common.host, function (err, hostObj) {
+                        var $sel = $('#webServerIp');
+                        $sel.append('<option value="">Auto-detect (Default)</option>');
+                        var found = false;
 
-                // If saved IP is not in the list (and not empty), add it manually to prevent data loss
-                if (settings.webServerIp && !found) {
-                     $sel.append('<option value="' + settings.webServerIp + '" selected>' + settings.webServerIp + ' (Saved)</option>');
+                        if (!err && hostObj && hostObj.native && hostObj.native.hardware && hostObj.native.hardware.networkInterfaces) {
+                             var interfaces = hostObj.native.hardware.networkInterfaces;
+                             // Iterate over interfaces
+                             for (var ifaceName in interfaces) {
+                                 if (!interfaces.hasOwnProperty(ifaceName)) continue;
+                                 interfaces[ifaceName].forEach(function(iface) {
+                                     // Filter for IPv4 and not internal
+                                     if (iface.family === 'IPv4' && !iface.internal) {
+                                         var selected = (iface.address === settings.webServerIp) ? 'selected' : '';
+                                         if (selected) found = true;
+                                         $sel.append('<option value="' + iface.address + '" ' + selected + '>' + ifaceName + ' - ' + iface.address + '</option>');
+                                     }
+                                 });
+                             }
+                        }
+
+                        // If saved IP is not in the list (and not empty), add it manually to prevent data loss
+                        if (settings.webServerIp && !found) {
+                             $sel.append('<option value="' + settings.webServerIp + '" selected>' + settings.webServerIp + ' (Saved)</option>');
+                        }
+
+                        // Initialize Materialize Select
+                        $sel.formSelect();
+                        $sel.on('change', () => onChange());
+                    });
                 }
-
-                // Initialize Materialize Select
-                $sel.formSelect();
-                $sel.on('change', () => onChange());
             });
 
             updateUI();
