@@ -79,6 +79,12 @@ class GoogleBroadcast extends utils.Adapter {
         this.subscribeStates('broadcast_all');
         this.subscribeStates('devices.*.broadcast');
         this.subscribeStates('groups.*.broadcast');
+        this.subscribeStates('devices.*.volume');
+        this.subscribeStates('groups.*.volume');
+
+        // Start Volume Polling
+        this.pollVolume();
+        setInterval(() => this.pollVolume(), 15000);
     }
 
     findLocalIp() {
@@ -196,7 +202,7 @@ class GoogleBroadcast extends utils.Adapter {
     }
     
     scanNetwork() {
-        this.log.debug('[mDNS] Sending discovery query...');
+        this.log.silly('[mDNS] Sending discovery query...');
         if (this.mdns) this.mdns.query({ questions: [{ name: '_googlecast._tcp.local', type: 'PTR' }] });
     }
 
@@ -209,10 +215,10 @@ class GoogleBroadcast extends utils.Adapter {
         let friendlyName, model;
         const txt = records.find(r => r.type === 'TXT' && r.name === instanceName);
         if (txt) {
-            this.log.debug(`[mDNS] TXT Record for ${instanceName}:`);
+            this.log.silly(`[mDNS] TXT Record for ${instanceName}:`);
             txt.data.forEach(buf => {
                 const s = buf.toString();
-                this.log.debug(`  - ${s}`);
+                this.log.silly(`  - ${s}`);
                 if (s.startsWith('fn=')) friendlyName = s.substring(3);
                 if (s.startsWith('md=')) model = s.substring(3);
             });
@@ -229,7 +235,7 @@ class GoogleBroadcast extends utils.Adapter {
         const isStereoPair = (friendlyName.toLowerCase().includes('paar') || friendlyName.toLowerCase().includes('pair'));
         const folder = (model === 'Google Cast Group' || isStereoPair) ? 'groups' : 'devices';
 
-        this.log.debug(`[mDNS] Found ${friendlyName} at ${ip}:${port} (${model})`);
+        this.log.silly(`[mDNS] Found ${friendlyName} at ${ip}:${port} (${model})`);
 
         // Update Normalization Maps
         const normName = this.normalizeName(friendlyName);
@@ -292,10 +298,73 @@ class GoogleBroadcast extends utils.Adapter {
         }
 
         await this.setObjectNotExistsAsync(`${folder}.${cleanId}.broadcast`, { type: 'state', common: { name: 'Broadcast', type: 'string', role: 'text', read: true, write: true } });
+        
+        // Add Volume State
+        await this.setObjectNotExistsAsync(`${folder}.${cleanId}.volume`, { type: 'state', common: { name: 'Volume', type: 'number', role: 'level.volume', read: true, write: true, min: 0, max: 100, unit: '%' } });
+        this.subscribeStates(`${folder}.${cleanId}.volume`);
+    }
+
+    async setVolume(ip, port, level) {
+        if (!ip) return;
+        try {
+            const client = new Client();
+            const connectOptions = { host: ip, port: port || 8009 };
+            client.connect(connectOptions, () => {
+                client.setVolume({ level: level / 100 }, (err) => {
+                   if (err) this.log.error(`[VOLUME] Set Error: ${err.message}`);
+                   client.close();
+                });
+            });
+            client.on('error', (err) => {
+                this.log.error(`[VOLUME] Connection Error: ${err.message}`);
+                client.close();
+            });
+        } catch (e) {
+            this.log.error(`[VOLUME] Global Error: ${e.message}`);
+        }
+    }
+
+    async pollVolume() {
+        const folders = ['devices', 'groups'];
+        for (const folder of folders) {
+            const devices = await this.getStatesAsync(`${folder}.*`);
+            if (!devices) continue;
+
+            // Extract unique device IDs from states
+            const uniqueIds = new Set();
+            for (const id of Object.keys(devices)) {
+                const parts = id.split('.');
+                // namespace.folder.deviceId.state -> take namespace.folder.deviceId
+                if (parts.length >= 4) uniqueIds.add(parts.slice(0, 3).join('.')); 
+            }
+
+            for (const deviceId of uniqueIds) {
+                const obj = await this.getObjectAsync(deviceId);
+                if (obj && obj.native && obj.native.ip) {
+                    const ip = obj.native.ip;
+                    const port = obj.native.port || 8009;
+
+                    try {
+                        const client = new Client();
+                        client.connect({ host: ip, port: port }, () => {
+                             client.getStatus((err, status) => {
+                                 if (!err && status && status.volume) {
+                                     const vol = Math.round(status.volume.level * 100);
+                                     // Only update if changed to avoid log spam, but here we just set it
+                                     this.setState(`${deviceId.split('.').pop()}.volume`, vol, true); // Ack = true
+                                 }
+                                 client.close();
+                             });
+                        });
+                        client.on('error', () => client.close());
+                    } catch (e) { /* ignore */ }
+                }
+            }
+        }
     }
 
     async onStateChange(id, state) {
-        if (state && !state.ack && state.val) {
+        if (state && !state.ack && state.val !== null) {
             if (id.endsWith('broadcast_all')) {
                 const devices = await this.getDevicesAsync();
                 for (const dev of devices) {
@@ -309,8 +378,28 @@ class GoogleBroadcast extends utils.Adapter {
                 if (deviceObj && deviceObj.native && deviceObj.native.ip) {
                     this.castTTS(deviceId, deviceObj.native.ip, state.val, null, null, deviceObj.native.port);
                 }
+            } else if (id.includes('.volume')) {
+                const parts = id.split('.');
+                const deviceId = parts[parts.length - 2];
+                const folder = parts[parts.length - 3];
+                let deviceObj = await this.getObjectAsync(`${this.namespace}.${folder}.${deviceId}`);
+                
+                if (deviceObj && deviceObj.native && deviceObj.native.ip) {
+                    let targetIp = deviceObj.native.ip;
+                    let targetPort = deviceObj.native.port;
+
+                    // Stereo Redirection Logic
+                    if (this.stereoMap.has(deviceId)) {
+                         const mapping = this.stereoMap.get(deviceId);
+                         this.log.debug(`[VOLUME] Redirecting volume set for ${deviceId} to Group ${mapping.groupName}`);
+                         targetIp = mapping.pairIp;
+                         if (mapping.pairPort) targetPort = mapping.pairPort;
+                    }
+
+                    this.setVolume(targetIp, targetPort, state.val);
+                }
             }
-            this.setState(id, null, true);
+            this.setState(id, state.val, true); // Ack
         }
     }
 
