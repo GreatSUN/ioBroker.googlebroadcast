@@ -358,10 +358,9 @@ class GoogleBroadcast extends utils.Adapter {
         client.launch(DefaultMediaReceiver, (err, player) => {
             if (err) {
                 if (!retried) {
-                    this.log.warn(`Launch failed (${JSON.stringify(err)}). Kicking platform and retrying...`);
-                    client.stop({ sessionId: '00000000-0000-0000-0000-000000000000' }, () => {
-                        setTimeout(() => this.launchNew(client, url, true), 750);
-                    });
+                    this.log.warn(`Launch failed (${JSON.stringify(err)}). Retrying in 1s...`);
+                    // Removed unsafe client.stop({...}) that caused crash
+                    setTimeout(() => this.launchNew(client, url, true), 1000);
                 } else {
                     this.log.error(`Launch Error (Persistent): ${err.message || JSON.stringify(err)}`);
                     client.close();
