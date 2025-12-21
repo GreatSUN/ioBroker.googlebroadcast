@@ -56,6 +56,7 @@ class GoogleBroadcast extends utils.Adapter {
     }
 
     async initGoogleAssistant() {
+        // ... (No changes to Assistant logic) ...
         const credentialsJson = this.config.jsonCredentials;
         const tokenState = await this.getStateAsync('tokens');
         let tokensJson = tokenState && tokenState.val ? tokenState.val : null;
@@ -177,11 +178,6 @@ class GoogleBroadcast extends utils.Adapter {
             const client = new Client();
             
             client.connect(deviceIp, () => {
-                // Use DefaultMediaReceiver - this is standard for Audio too.
-                // If NOT_ALLOWED occurs, it usually means we need to handle the session differently or retry.
-                // However, for pure audio, we can try avoiding the "Launch" if a session is active, 
-                // but launch is the safest standard way.
-                
                 client.launch(DefaultMediaReceiver, (err, player) => {
                     if (err) {
                         this.log.error('Cast Launch Error: ' + err);
@@ -191,22 +187,30 @@ class GoogleBroadcast extends utils.Adapter {
                     const media = {
                         contentId: url,
                         contentType: 'audio/mp3',
-                        streamType: 'BUFFERED' // Important for MP3 streams
+                        streamType: 'BUFFERED'
                     };
                     
                     player.load(media, { autoplay: true }, (err, status) => {
                         if (err) {
                             this.log.error('Cast Load Error: ' + err);
+                            client.close();
                         } else {
-                            this.log.debug('Playback started.');
+                            this.log.debug('Playback started. Waiting for end...');
                         }
-                        client.close();
+                    });
+
+                    // Wait for playback to finish before closing connection
+                    player.on('status', (status) => {
+                        if (status && status.playerState === 'IDLE' && status.idleReason === 'FINISHED') {
+                            this.log.debug('Playback finished. Closing connection.');
+                            client.close();
+                        }
                     });
                 });
             });
             
             client.on('error', (err) => {
-                // Suppress common socket errors that happen during close
+                // Ignore "closed" errors that happen on normal shutdown
                 if (err.message && !err.message.includes('closed')) {
                     this.log.error('Cast Client Error: ' + err);
                 }
@@ -266,7 +270,6 @@ class GoogleBroadcast extends utils.Adapter {
         const isGroup = (model === 'Google Cast Group');
         const folder = isGroup ? 'groups' : 'devices';
         
-        // Save Device with IP
         await this.setObjectNotExistsAsync(`${folder}.${cleanId}`, {
             type: 'device',
             common: { name: friendlyName },
@@ -313,7 +316,6 @@ class GoogleBroadcast extends utils.Adapter {
     async onStateChange(id, state) {
         if (state && !state.ack && state.val) {
             
-            // Broadcast All
             if (id.endsWith('broadcast_all')) {
                 const lang = this.config.language || 'en-US';
                 if (this.config.broadcastMode === 'cast') {
@@ -330,7 +332,6 @@ class GoogleBroadcast extends utils.Adapter {
                 this.setState(id, null, true);
             } 
             
-            // Specific Device
             else if (id.includes('.broadcast')) {
                 const deviceId = id.substring(0, id.lastIndexOf('.'));
                 const deviceObj = await this.getObjectAsync(deviceId);
