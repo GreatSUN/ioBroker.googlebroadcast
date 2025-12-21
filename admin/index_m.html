@@ -12,9 +12,14 @@
     <script type="text/javascript">
         function load(settings, onChange) {
             if (!settings) return;
+            
+            // Populate checkboxes and basic inputs first
             $('.value').each(function () {
                 var $key = $(this);
                 var id = $key.attr('id');
+                // Skip the dropdown for now, we load it dynamically
+                if (id === 'webServerIp') return; 
+
                 if ($key.attr('type') === 'checkbox') {
                     $key.prop('checked', settings[id]).on('change', () => onChange());
                 } else {
@@ -22,7 +27,32 @@
                     $key.on('change', () => onChange());
                 }
             });
-            
+
+            // LOAD INTERFACES DYNAMICALLY
+            sendTo(null, 'getInterfaces', {}, function (response) {
+                var $sel = $('#webServerIp');
+                var interfaces = (response && response.result) ? response.result : [];
+                
+                // Add Auto-detect option
+                $sel.append('<option value="">Auto-detect (Default)</option>');
+                
+                var found = false;
+                interfaces.forEach(function(iface) {
+                    var selected = (iface.address === settings.webServerIp) ? 'selected' : '';
+                    if (selected) found = true;
+                    $sel.append('<option value="' + iface.address + '" ' + selected + '>' + iface.name + ' - ' + iface.address + '</option>');
+                });
+
+                // If saved IP is not in the list (and not empty), add it manually to prevent data loss
+                if (settings.webServerIp && !found) {
+                     $sel.append('<option value="' + settings.webServerIp + '" selected>' + settings.webServerIp + ' (Saved)</option>');
+                }
+
+                // Initialize Materialize Select
+                $sel.formSelect();
+                $sel.on('change', () => onChange());
+            });
+
             updateUI();
             $('#broadcastMode').on('change', updateUI);
             $('#ttsEngine').on('change', updateUI);
@@ -121,7 +151,7 @@
             </div>
         </div>
 
-        <div class="row cast-only" style="display:none; background-color: #f1f8e9; padding: 10px; border-radius: 5px;">
+        <div class="row cast-only" style="display:none; padding: 10px;">
             <div class="col s12"><h5>Chromecast TTS Settings</h5></div>
             
             <div class="col s6">
@@ -142,9 +172,9 @@
 
             <div class="col s6">
                 <div class="input-field">
-                    <input type="text" id="webServerIp" class="value" placeholder="Leave empty for auto-detect" />
+                    <select id="webServerIp" class="value">
+                        </select>
                     <label for="webServerIp">Own IP for Web Server (Streaming Interface)</label>
-                    <span class="helper-text">Enter the IP of ioBroker reachable by the Cast devices (e.g. 192.168.63.x)</span>
                 </div>
             </div>
             <div class="col s6">

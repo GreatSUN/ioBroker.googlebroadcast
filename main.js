@@ -83,13 +83,11 @@ class GoogleBroadcast extends utils.Adapter {
             for (const iface of interfaces[name]) {
                 if ('IPv4' !== iface.family || iface.internal) continue;
                 found.push(iface.address);
-                // Prefer an IP that looks like a standard LAN (192.168... or 10...)
                 if (!this.localIp && !iface.address.startsWith('172.')) { 
                      this.localIp = iface.address;
                 }
             }
         }
-        // Fallback to first found if no "nice" one was found
         if (!this.localIp && found.length > 0) this.localIp = found[0];
 
         this.log.info(`Auto-detected Local IPs: ${found.join(', ')}. Using: ${this.localIp}`);
@@ -129,7 +127,6 @@ class GoogleBroadcast extends utils.Adapter {
     }
 
     async initGoogleAssistant() {
-        // ... (No changes here) ...
         const credentialsJson = this.config.jsonCredentials;
         const tokenState = await this.getStateAsync('tokens');
         let tokensJson = tokenState && tokenState.val ? tokenState.val : null;
@@ -198,6 +195,19 @@ class GoogleBroadcast extends utils.Adapter {
             if (obj.command === 'scan') {
                 this.scanNetwork();
                 if (obj.callback) this.sendTo(obj.from, obj.command, { result: 'OK' }, obj.callback);
+            }
+            // --- NEW: Handle Interface Request ---
+            if (obj.command === 'getInterfaces') {
+                const interfaces = os.networkInterfaces();
+                const result = [];
+                for (const name of Object.keys(interfaces)) {
+                    for (const iface of interfaces[name]) {
+                        if ('IPv4' === iface.family && !iface.internal) {
+                            result.push({ name: name, address: iface.address });
+                        }
+                    }
+                }
+                if (obj.callback) this.sendTo(obj.from, obj.command, { result: result }, obj.callback);
             }
         }
     }
@@ -339,6 +349,7 @@ class GoogleBroadcast extends utils.Adapter {
     }
 
     async processMdnsResponse(response) {
+        // ... (Existing mDNS Logic) ...
         const records = [...response.answers, ...response.additionals];
         const ptr = records.find(r => r.type === 'PTR' && r.name === '_googlecast._tcp.local');
         if (!ptr) return;
