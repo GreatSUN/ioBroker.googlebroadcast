@@ -50,9 +50,6 @@
                     $('#auth_link').attr('href', url);
                     $('#auth_link_container').show();
                     $('#auth_step_2').show();
-                    
-                    // Optional: Try to open it anyway, but relying on the link is safer
-                    // window.open(url, '_blank'); 
 
                 } catch(e) {
                     alert(_('Error') + ': ' + e);
@@ -116,6 +113,7 @@
         .step { font-weight: bold; color: #2196f3; }
         .auth-link-box { 
             background: #e3f2fd; 
+            color: #0d47a1 !important; /* Force dark text for visibility */
             padding: 15px; 
             border-radius: 4px; 
             border: 1px solid #2196f3; 
@@ -126,6 +124,11 @@
             font-size: 1.2em;
             font-weight: bold;
             text-decoration: underline;
+            color: #0d47a1 !important; /* Force dark link color */
+        }
+        /* Ensure the helper text inside the box is also readable */
+        .auth-link-box span {
+            color: #0d47a1 !important;
         }
     </style>
 </head>
@@ -170,7 +173,7 @@
         <div class="row">
             <div class="col s12">
                 <h5 class="translate">Token Storage (Automatic)</h5>
-                <textarea id="savedTokens" class="value materialize-textarea" readonly style="background: #f0f0f0;"></textarea>
+                <textarea id="savedTokens" class="value materialize-textarea" readonly style="background: #f0f0f0; color: #333;"></textarea>
             </div>
         </div>
 

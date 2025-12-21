@@ -4,41 +4,75 @@
     "version": "0.0.1",
     "news": {
       "0.0.1": {
-        "en": "Initial release",
-        "de": "Erstveröffentlichung"
+        "en": "initial release",
+        "de": "Erstveröffentlichung",
+        "ru": "Начальная версия",
+        "pt": "lançamento inicial",
+        "nl": "Eerste uitgave",
+        "fr": "Premier lancement",
+        "it": "Versione iniziale",
+        "es": "Versión inicial",
+        "pl": "Pierwsze wydanie",
+        "zh-cn": "首次发布"
       }
     },
-    "title": "Google Broadcast",
+    "title": "Google Assistant Broadcast",
+    "titleLang": {
+      "en": "Google Assistant Broadcast",
+      "de": "Google Assistant Broadcast",
+      "ru": "Трансляция Google Assistant",
+      "pt": "Transmissão do Google Assistant",
+      "nl": "Google Assistant-uitzending",
+      "fr": "Diffusion de l'Assistant Google",
+      "it": "Trasmissione Assistente Google",
+      "es": "Transmisión del Asistente de Google",
+      "pl": "Transmisja Asystenta Google",
+      "zh-cn": "谷歌助手广播"
+    },
     "desc": {
-      "en": "Broadcast text to Google Home devices natively",
-      "de": "Sendet Textnachrichten nativ an Google Home Geräte"
+      "en": "Broadcasts text messages via Google Assistant SDK",
+      "de": "Sendet Textnachrichten über das Google Assistant SDK",
+      "ru": "Транслирует текстовые сообщения через Google Assistant SDK",
+      "pt": "Transmite mensagens de texto via Google Assistant SDK",
+      "nl": "Zendt tekstberichten uit via Google Assistant SDK",
+      "fr": "Diffuse des messages texte via le SDK Google Assistant",
+      "it": "Trasmette messaggi di testo tramite Google Assistant SDK",
+      "es": "Transmite mensajes de texto a través del SDK del Asistente de Google",
+      "pl": "Nadaje wiadomości tekstowe przez Google Assistant SDK",
+      "zh-cn": "通过 Google Assistant SDK 广播文本消息"
     },
     "authors": [
       "User"
     ],
     "keywords": [
+      "ioBroker",
       "google",
-      "broadcast",
-      "assistant"
+      "assistant",
+      "broadcast"
     ],
     "platform": "Javascript/Node.js",
     "main": "main.js",
     "icon": "googlebroadcast.png",
     "enabled": true,
-    "extIcon": true,
-    "readme": "https://github.com/yourname/iobroker.googlebroadcast/blob/master/README.md",
+    "extIcon": "https://raw.githubusercontent.com/GreatSUN/iobroker.googlebroadcast/master/admin/googlebroadcast.png",
+    "readme": "https://github.com/GreatSUN/iobroker.googlebroadcast/blob/master/README.md",
     "loglevel": "info",
     "mode": "daemon",
     "type": "multimedia",
     "compact": true,
     "connectionType": "cloud",
     "dataSource": "push",
-    "materialize": true
+    "materialize": true,
+    "dependencies": [
+      {
+        "js-controller": ">=3.2.0"
+      }
+    ]
   },
   "native": {
     "jsonCredentials": "",
     "savedTokens": "",
-    "deviceModelId": "iobroker-broadcast-v1",
+    "deviceModelId": "iobroker-model",
     "scanInterval": 30
   },
   "objects": [],
@@ -47,12 +81,20 @@
       "_id": "broadcast_all",
       "type": "state",
       "common": {
-        "name": "Broadcast to All",
+        "name": "Broadcast to All Devices",
         "type": "string",
         "role": "text",
         "read": true,
         "write": true,
-        "desc": "Text written here is broadcasted to the whole house"
+        "desc": "Write text here to broadcast to all home devices"
+      },
+      "native": {}
+    },
+    {
+      "_id": "info",
+      "type": "channel",
+      "common": {
+        "name": "Information"
       },
       "native": {}
     },
