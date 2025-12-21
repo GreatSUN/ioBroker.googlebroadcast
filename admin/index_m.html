@@ -23,7 +23,7 @@
             });
             onChange(false);
 
-            // Client-Side Link Generator (Does not use adapter backend)
+            // Client-Side Link Generator
             $('#btn_generate_link').on('click', function() {
                 var json = $('#jsonCredentials').val();
                 if(!json) {
@@ -49,7 +49,7 @@
                 }
             });
             
-            // Manual Scan Button
+            // Manual Scan
             $('#btn_scan').on('click', function() {
                 sendTo(null, 'scan', {}, function(res) {
                     M.toast({html: 'Scan started'});
@@ -117,7 +117,7 @@
         </div>
 
         <div class="row">
-            <div class="col s6">
+            <div class="col s4">
                 <h5>Settings</h5>
                 <div class="input-field">
                     <input type="text" id="deviceModelId" class="value" />
@@ -127,8 +127,12 @@
                     <input type="number" id="scanInterval" class="value" />
                     <label for="scanInterval">Scan Interval (min)</label>
                 </div>
+                <div class="input-field">
+                    <input type="text" id="language" class="value" placeholder="en-US" />
+                    <label for="language">Default Language (e.g. en-US, de-DE)</label>
+                </div>
             </div>
-            <div class="col s6">
+            <div class="col s4">
                 <h5>Actions</h5>
                 <a class="waves-effect waves-light btn blue" id="btn_scan">Scan Devices</a>
             </div>

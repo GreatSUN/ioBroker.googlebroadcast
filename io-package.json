@@ -1,10 +1,13 @@
 {
   "common": {
     "name": "googlebroadcast",
-    "version": "0.1.0",
+    "version": "0.2.0",
     "news": {
-      "0.1.0": {
-        "en": "Beta release"
+      "0.0.2": {
+        "en": "Added language support and fixed double broadcasts"
+      },
+      "0.2.0": {
+        "en": "initial release"
       }
     },
     "title": "Google Assistant Broadcast",
@@ -43,6 +46,7 @@
     "jsonCredentials": "",
     "authCode": "",
     "deviceModelId": "iobroker-model",
+    "language": "en-US",
     "scanInterval": 30
   },
   "objects": [],
