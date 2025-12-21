@@ -1,8 +1,11 @@
 {
   "common": {
     "name": "googlebroadcast",
-    "version": "0.2.1",
+    "version": "0.3.0",
     "news": {
+      "0.3.0": {
+        "en": "Added Chromecast TTS support for reliable targeting via IP address"
+      },
       "0.2.1": {
         "en": "Extended/fixed language support for different device/assistant languages"
       },
@@ -15,11 +18,10 @@
       "0.0.1": {
         "en": "initial release"
       }
-
     },
     "title": "Google Assistant Broadcast",
     "desc": {
-      "en": "Broadcasts text messages via Google Assistant SDK"
+      "en": "Broadcasts text messages via Google Assistant SDK or Chromecast TTS"
     },
     "authors": [
       "User"
@@ -28,7 +30,8 @@
       "ioBroker",
       "google",
       "assistant",
-      "broadcast"
+      "broadcast",
+      "tts"
     ],
     "platform": "Javascript/Node.js",
     "main": "main.js",
@@ -54,6 +57,8 @@
     "authCode": "",
     "deviceModelId": "iobroker-model",
     "language": "en-US",
+    "broadcastMode": "assistant",
+    "ttsSpeed": 1,
     "scanInterval": 30
   },
   "objects": [],

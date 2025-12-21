@@ -19,42 +19,42 @@
                     $key.prop('checked', settings[id]).on('change', () => onChange());
                 } else {
                     $key.val(settings[id]).on('change', () => onChange()).on('keyup', () => onChange());
+                    $key.on('change', () => onChange()); // Ensure selects trigger change
                 }
             });
+            // Initial UI state
+            updateUI();
+            $('#broadcastMode').on('change', updateUI);
             onChange(false);
 
-            // Client-Side Link Generator
             $('#btn_generate_link').on('click', function() {
                 var json = $('#jsonCredentials').val();
-                if(!json) {
-                    alert(_('Please paste credentials.json first'));
-                    return;
-                }
+                if(!json) { alert(_('Please paste credentials.json first')); return; }
                 try {
                     var creds = JSON.parse(json);
                     var keys = creds.installed || creds.web;
-                    if (!keys || !keys.client_id) {
-                        alert('Invalid JSON. Missing client_id.');
-                        return;
-                    }
+                    if (!keys || !keys.client_id) { alert('Invalid JSON. Missing client_id.'); return; }
                     var scope = encodeURIComponent('https://www.googleapis.com/auth/assistant-sdk-prototype');
                     var redirect = encodeURIComponent('urn:ietf:wg:oauth:2.0:oob');
                     var url = 'https://accounts.google.com/o/oauth2/v2/auth?access_type=offline&scope=' + scope + '&response_type=code&client_id=' + keys.client_id + '&redirect_uri=' + redirect;
-
                     $('#auth_link').attr('href', url);
                     $('#auth_link_container').show();
                     $('#auth_step_2').show();
-                } catch(e) {
-                    alert('Error: ' + e);
-                }
+                } catch(e) { alert('Error: ' + e); }
             });
             
-            // Manual Scan
             $('#btn_scan').on('click', function() {
-                sendTo(null, 'scan', {}, function(res) {
-                    M.toast({html: 'Scan started'});
-                });
+                sendTo(null, 'scan', {}, function(res) { M.toast({html: 'Scan started'}); });
             });
+        }
+
+        function updateUI() {
+            var mode = $('#broadcastMode').val();
+            if (mode === 'cast') {
+                $('.assistant-only').hide();
+            } else {
+                $('.assistant-only').show();
+            }
         }
 
         function save(callback) {
@@ -91,50 +91,62 @@
 
         <div class="row">
             <div class="col s12">
-                <h5 class="translate">Google Credentials</h5>
-                <p class="translate">1. Paste credentials.json here.</p>
-                <textarea id="jsonCredentials" class="value materialize-textarea" style="font-family: monospace; font-size: 0.8em; min-height: 100px;"></textarea>
+                <h5>Main Configuration</h5>
+                <div class="col s6">
+                    <div class="input-field">
+                        <select id="broadcastMode" class="value">
+                            <option value="assistant">Google Assistant SDK (Official Broadcast)</option>
+                            <option value="cast">Chromecast / Google Home (TTS Audio)</option>
+                        </select>
+                        <label for="broadcastMode">Broadcast Method</label>
+                    </div>
+                </div>
+                <div class="col s6">
+                    <div class="input-field">
+                        <input type="text" id="language" class="value" placeholder="en-US" />
+                        <label for="language">Default Language (en-US, de-DE)</label>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="row assistant-only">
+            <div class="col s12">
+                <h5 class="translate">Assistant Credentials</h5>
+                <p class="translate">Required only for "Google Assistant SDK" mode.</p>
+                <div class="col s12">
+                    <textarea id="jsonCredentials" class="value materialize-textarea" placeholder="Paste credentials.json here..." style="font-family: monospace; font-size: 0.8em; min-height: 80px;"></textarea>
+                </div>
+                <div class="col s12">
+                     <a class="waves-effect waves-light btn translate" id="btn_generate_link">Get Auth Link</a>
+                     <div id="auth_link_container" style="display:none; margin-top:10px;">
+                        <a href="#" target="_blank" id="auth_link" style="font-weight:bold;">OPEN GOOGLE LOGIN</a>
+                     </div>
+                     <div id="auth_step_2" style="margin-top: 10px; display:none;">
+                        <input type="text" id="authCode" class="value" placeholder="Paste Auth Code here" />
+                     </div>
+                </div>
             </div>
         </div>
 
         <div class="row">
             <div class="col s12">
-                <h5 class="translate">Authentication</h5>
-                <a class="waves-effect waves-light btn translate" id="btn_generate_link">2. Get Auth Link</a>
-                
-                <div id="auth_link_container" style="display:none;">
-                    <div class="auth-link-box">
-                        <span class="translate">Click to Login:</span>
-                        <a href="#" target="_blank" id="auth_link">OPEN GOOGLE LOGIN</a>
+                <h5>Device Scanning</h5>
+                <div class="col s4">
+                    <div class="input-field">
+                        <input type="number" id="scanInterval" class="value" />
+                        <label for="scanInterval">Scan Interval (min)</label>
                     </div>
                 </div>
-
-                <div id="auth_step_2" style="margin-top: 25px; display:none;">
-                    <p class="translate">3. Paste Code & CLICK SAVE at the bottom</p>
-                    <input type="text" id="authCode" class="value" placeholder="Paste 4/0A... here" />
+                <div class="col s4">
+                     <div class="input-field">
+                        <input type="text" id="deviceModelId" class="value" />
+                        <label for="deviceModelId">Device Model ID (Assistant Mode only)</label>
+                    </div>
                 </div>
-            </div>
-        </div>
-
-        <div class="row">
-            <div class="col s4">
-                <h5>Settings</h5>
-                <div class="input-field">
-                    <input type="text" id="deviceModelId" class="value" />
-                    <label for="deviceModelId">Device Model ID</label>
+                <div class="col s4" style="margin-top: 20px;">
+                    <a class="waves-effect waves-light btn blue" id="btn_scan">Scan Devices Now</a>
                 </div>
-                <div class="input-field">
-                    <input type="number" id="scanInterval" class="value" />
-                    <label for="scanInterval">Scan Interval (min)</label>
-                </div>
-                <div class="input-field">
-                    <input type="text" id="language" class="value" placeholder="en-US" />
-                    <label for="language">Default Language (e.g. en-US, de-DE)</label>
-                </div>
-            </div>
-            <div class="col s4">
-                <h5>Actions</h5>
-                <a class="waves-effect waves-light btn blue" id="btn_scan">Scan Devices</a>
             </div>
         </div>
     </div>

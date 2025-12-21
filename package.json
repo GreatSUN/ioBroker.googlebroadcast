@@ -1,21 +1,36 @@
 {
   "name": "iobroker.googlebroadcast",
-  "version": "0.0.1",
-  "description": "Broadcasts text messages via Google Assistant to specific devices or groups",
+  "version": "0.3.0",
+  "description": "Broadcasts text messages via Google Assistant SDK or Chromecast",
   "author": "User",
   "license": "MIT",
-  "main": "main.js",
+  "homepage": "https://github.com/GreatSUN/iobroker.googlebroadcast",
+  "readme": "https://github.com/GreatSUN/iobroker.googlebroadcast/blob/master/README.md",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/GreatSUN/iobroker.googlebroadcast"
+  },
   "dependencies": {
     "@iobroker/adapter-core": "^3.2.3",
     "google-assistant": "^0.7.0",
+    "googleapis": "^144.0.0",
     "multicast-dns": "^7.2.5",
-    "googleapis": "^126.0.0"
+    "castv2-client": "^1.2.0",
+    "google-tts-api": "^2.0.2"
   },
   "keywords": [
-    "iobroker",
+    "ioBroker",
     "google",
-    "broadcast",
     "assistant",
-    "home"
-  ]
+    "broadcast",
+    "chromecast",
+    "tts"
+  ],
+  "main": "main.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "bugs": {
+    "url": "https://github.com/GreatSUN/iobroker.googlebroadcast/issues"
+  }
 }

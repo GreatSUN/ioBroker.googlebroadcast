@@ -7,14 +7,9 @@ const { google } = require('googleapis');
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
-
-// Command structure based on language
-const COMMAND_PREFIXES = {
-    'en': (target, text) => `Broadcast to ${target} ${text}`,
-    'de': (target, text) => `Sende an ${target} ${text}`,
-    // Fallback for others (defaulting to English structure often works best globally)
-    'default': (target, text) => `Broadcast to ${target} ${text}`
-};
+const Client = require('castv2-client').Client;
+const DefaultMediaReceiver = require('castv2-client').DefaultMediaReceiver;
+const googleTTS = require('google-tts-api');
 
 class GoogleBroadcast extends utils.Adapter {
 
@@ -40,7 +35,15 @@ class GoogleBroadcast extends utils.Adapter {
         this.credsPath = path.join(os.tmpdir(), `iobroker_google_${this.namespace}_creds.json`);
         this.tokensPath = path.join(os.tmpdir(), `iobroker_google_${this.namespace}_tokens.json`);
 
-        await this.initGoogleAssistant();
+        // Mode Check
+        if (this.config.broadcastMode === 'cast') {
+            this.log.info('Starting in Chromecast TTS Mode (No Assistant Auth required)');
+            this.setState('info.connection', true, true);
+        } else {
+            // Default to Assistant
+            await this.initGoogleAssistant();
+        }
+
         this.initMdns();
 
         const intervalMinutes = this.config.scanInterval || 30;
@@ -55,9 +58,8 @@ class GoogleBroadcast extends utils.Adapter {
     }
 
     async initGoogleAssistant() {
+        // ... (Keep existing Assistant Logic unchanged) ...
         const credentialsJson = this.config.jsonCredentials;
-        
-        // --- AUTH LOGIC ---
         const tokenState = await this.getStateAsync('tokens');
         let tokensJson = tokenState && tokenState.val ? tokenState.val : null;
         let tokensObj = null;
@@ -87,7 +89,7 @@ class GoogleBroadcast extends utils.Adapter {
         }
 
         if (!credentialsJson || !tokensObj) {
-            this.log.warn('Adapter not authenticated. Please configure in Admin.');
+            this.log.warn('Assistant not authenticated. Please configure in Admin or switch to "Chromecast TTS" mode.');
             this.setState('info.connection', false, true);
             return;
         }
@@ -113,19 +115,16 @@ class GoogleBroadcast extends utils.Adapter {
             this.assistantReady = false;
 
             this.assistant = new GoogleAssistant(config.auth);
-            
             this.assistant.on('ready', () => {
                 this.log.info('Google Assistant SDK connected!');
                 this.assistantReady = true;
                 this.setState('info.connection', true, true);
             });
-            
             this.assistant.on('error', (err) => {
                 this.log.error('Google Assistant Error: ' + err);
                 this.assistantReady = false;
                 this.setState('info.connection', false, true);
             });
-
         } catch (e) {
             this.log.error('Init failed: ' + e.message);
         }
@@ -140,14 +139,13 @@ class GoogleBroadcast extends utils.Adapter {
         }
     }
 
+    // --- ASSISTANT BROADCAST ---
     sendBroadcast(textCommand, lang) {
         if (!this.assistant || !this.assistantReady) {
-            this.log.warn('Cannot broadcast: Assistant not ready yet.');
+            this.log.warn('Cannot broadcast: Assistant not ready.');
             return;
         }
-
         const finalLang = lang || this.config.language || 'en-US';
-
         const config = {
             conversation: {
                 textQuery: textCommand,
@@ -157,14 +155,53 @@ class GoogleBroadcast extends utils.Adapter {
                 deviceLocation: { coordinates: { latitude: 0, longitude: 0 } }
             }
         };
-
-        this.log.debug(`Sending broadcast (${finalLang}): "${textCommand}"`);
-
+        this.log.debug(`Assistant Broadcast (${finalLang}): "${textCommand}"`);
         this.assistant.start(config.conversation, (conversation) => {
-            conversation
-                .on('response', (text) => text && this.log.debug('Google Response: ' + text))
-                .on('ended', (err) => err ? this.log.error('Error: ' + err) : this.log.debug('Broadcast sent.'))
-                .on('error', (err) => this.log.error('Conversation Error: ' + err));
+            conversation.on('ended', (err) => err ? this.log.error('Error: ' + err) : this.log.debug('Sent.'))
+                        .on('error', (err) => this.log.error('Conversation Error: ' + err));
+        });
+    }
+
+    // --- CHROMECAST TTS ---
+    async castTTS(deviceIp, text, lang) {
+        if (!deviceIp) {
+            this.log.error('Cannot Cast: Device IP missing.');
+            return;
+        }
+        const finalLang = lang || this.config.language || 'en-US';
+        
+        // 1. Generate TTS URL (max 200 chars usually for free API)
+        const url = googleTTS.getAudioUrl(text, {
+            lang: finalLang,
+            slow: false,
+            host: 'https://translate.google.com',
+        });
+
+        this.log.debug(`Casting TTS to ${deviceIp} (${finalLang}): "${text}"`);
+
+        const client = new Client();
+        client.connect(deviceIp, () => {
+            client.launch(DefaultMediaReceiver, (err, player) => {
+                if (err) {
+                    this.log.error('Cast Launch Error: ' + err);
+                    client.close();
+                    return;
+                }
+                const media = {
+                    contentId: url,
+                    contentType: 'audio/mp3',
+                    streamType: 'BUFFERED'
+                };
+                player.load(media, { autoplay: true }, (err, status) => {
+                    if (err) this.log.error('Cast Load Error: ' + err);
+                    client.close();
+                });
+            });
+        });
+        
+        client.on('error', (err) => {
+            this.log.error('Cast Client Error: ' + err);
+            client.close();
         });
     }
 
@@ -180,31 +217,53 @@ class GoogleBroadcast extends utils.Adapter {
     }
 
     async processMdnsResponse(response) {
+        // We need: PTR -> SRV (Port) -> A (IP)
         const records = [...response.answers, ...response.additionals];
+        
+        // 1. Find the Google Cast instance name (PTR)
+        const ptr = records.find(r => r.type === 'PTR' && r.name === '_googlecast._tcp.local');
+        if (!ptr) return;
+        
+        const instanceName = ptr.data; // e.g., "Google-Home-123._googlecast._tcp.local"
+        
+        // 2. Find Friendly Name (TXT)
         let friendlyName = null;
-        let modelDescription = null;
-
-        const txtRecord = records.find(r => r.type === 'TXT' && r.name.includes('_googlecast'));
-        if (txtRecord && txtRecord.data) {
-            const dataParts = [];
-            let buf = txtRecord.data;
-            if (Array.isArray(buf)) { buf.forEach(b => dataParts.push(b.toString())); }
-            dataParts.forEach(part => {
-                if (part.startsWith('fn=')) friendlyName = part.substring(3);
-                if (part.startsWith('md=')) modelDescription = part.substring(3);
+        let model = null;
+        const txt = records.find(r => r.type === 'TXT' && r.name === instanceName);
+        if (txt && Array.isArray(txt.data)) {
+            txt.data.forEach(buf => {
+                const s = buf.toString();
+                if (s.startsWith('fn=')) friendlyName = s.substring(3);
+                if (s.startsWith('md=')) model = s.substring(3);
             });
         }
 
-        if (!friendlyName) return;
+        // 3. Find Hostname and Port (SRV)
+        const srv = records.find(r => r.type === 'SRV' && r.name === instanceName);
+        if (!srv) return;
+        const port = srv.data.port;
+        const hostname = srv.data.target;
+
+        // 4. Find IP Address (A)
+        const aRecord = records.find(r => r.type === 'A' && r.name === hostname);
+        const ip = aRecord ? aRecord.data : null;
+
+        if (!friendlyName || !ip) return;
 
         const cleanId = friendlyName.replace(/[^a-zA-Z0-9_-]/g, '_');
-        const isGroup = (modelDescription === 'Google Cast Group');
+        const isGroup = (model === 'Google Cast Group');
         const folder = isGroup ? 'groups' : 'devices';
         
+        // Save Device with IP in native
         await this.setObjectNotExistsAsync(`${folder}.${cleanId}`, {
             type: 'device',
             common: { name: friendlyName },
-            native: { model: modelDescription }
+            native: { model: model, ip: ip, port: port }
+        });
+        
+        // Update IP if changed
+        await this.extendObjectAsync(`${folder}.${cleanId}`, {
+            native: { ip: ip, port: port }
         });
 
         await this.setObjectNotExistsAsync(`${folder}.${cleanId}.broadcast`, {
@@ -216,13 +275,12 @@ class GoogleBroadcast extends utils.Adapter {
         await this.setObjectNotExistsAsync(`${folder}.${cleanId}.language`, {
             type: 'state',
             common: { 
-                name: `Language for ${friendlyName}`, 
+                name: `Language`, 
                 type: 'string', 
                 role: 'text', 
                 read: true, 
                 write: true, 
-                def: this.config.language || 'en-US',
-                desc: 'Two-letter code (en-US, de-DE)' 
+                def: this.config.language || 'en-US'
             },
             native: {}
         });
@@ -231,19 +289,28 @@ class GoogleBroadcast extends utils.Adapter {
     async onStateChange(id, state) {
         if (state && !state.ack && state.val) {
             
-            // 1. Broadcast All
+            // Broadcast All
             if (id.endsWith('broadcast_all')) {
                 const lang = this.config.language || 'en-US';
-                const prefix = lang.startsWith('de') ? 'Sende an alle' : 'Broadcast';
                 
-                // For "All", we just say "Broadcast [Text]" or "Sende an alle [Text]"
-                const cmd = `${prefix} ${state.val}`;
-                
-                this.sendBroadcast(cmd, lang);
+                if (this.config.broadcastMode === 'cast') {
+                    // CAST MODE: Loop through all known devices and cast
+                    // Note: This is not perfectly synchronous like a real Group
+                    const devices = await this.getDevicesAsync();
+                    for (const dev of devices) {
+                        if (dev.native && dev.native.ip) {
+                            this.castTTS(dev.native.ip, state.val, lang);
+                        }
+                    }
+                } else {
+                    // ASSISTANT MODE
+                    let cmd = lang.startsWith('de') ? `Nachricht an alle ${state.val}` : `Broadcast ${state.val}`;
+                    this.sendBroadcast(cmd, lang);
+                }
                 this.setState(id, null, true);
             } 
             
-            // 2. Specific Device Broadcast
+            // Specific Device
             else if (id.includes('.broadcast')) {
                 const obj = await this.getObjectAsync(id);
                 if (obj && obj.native && obj.native.friendlyName) {
@@ -251,16 +318,26 @@ class GoogleBroadcast extends utils.Adapter {
                     const langId = id.replace('.broadcast', '.language');
                     const langState = await this.getStateAsync(langId);
                     const lang = (langState && langState.val) ? langState.val : (this.config.language || 'en-US');
-
-                    // Determine Command Structure
-                    // If language is 'de-DE', use 'de' prefix. Else default to 'en'.
-                    const shortLang = lang.split('-')[0]; 
-                    const builder = COMMAND_PREFIXES[shortLang] || COMMAND_PREFIXES['default'];
-
-                    const target = obj.native.friendlyName;
-                    const cmd = builder(target, state.val);
                     
-                    this.sendBroadcast(cmd, lang);
+                    // --- NEW BRANCH ---
+                    if (this.config.broadcastMode === 'cast') {
+                        // Cast directly to IP
+                        if (obj.native.ip) {
+                            this.castTTS(obj.native.ip, state.val, lang);
+                        } else {
+                            this.log.warn(`No IP found for ${obj.native.friendlyName}. Rescan needed?`);
+                        }
+                    } else {
+                        // Original Assistant Logic
+                        const target = obj.native.friendlyName;
+                        let cmd = "";
+                        if (lang.startsWith('en')) {
+                            cmd = `Broadcast to ${target} ${state.val}`;
+                        } else {
+                            cmd = `Broadcast ${state.val}`; // Fallback to all
+                        }
+                        this.sendBroadcast(cmd, lang);
+                    }
                     this.setState(id, null, true);
                 }
             }
