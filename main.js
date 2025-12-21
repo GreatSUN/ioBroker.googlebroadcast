@@ -83,8 +83,12 @@ class GoogleBroadcast extends utils.Adapter {
         this.subscribeStates('groups.*.volume');
 
         // Start Volume Polling
+        const pollIntervalSec = this.config.pollInterval || 30;
+        this.log.info(`[CONFIG] Volume Poll Interval: ${pollIntervalSec}s`);
         this.pollVolume();
-        setInterval(() => this.pollVolume(), 15000);
+        if (pollIntervalSec > 0) {
+            setInterval(() => this.pollVolume(), pollIntervalSec * 1000);
+        }
     }
 
     findLocalIp() {
@@ -327,15 +331,13 @@ class GoogleBroadcast extends utils.Adapter {
     async pollVolume() {
         const folders = ['devices', 'groups'];
         for (const folder of folders) {
-            const devices = await this.getStatesAsync(`${folder}.*`);
-            if (!devices) continue;
+            const states = await this.getStatesAsync(`${folder}.*.volume`);
+            if (!states) continue;
 
-            // Extract unique device IDs from states
             const uniqueIds = new Set();
-            for (const id of Object.keys(devices)) {
+            for (const id of Object.keys(states)) {
                 const parts = id.split('.');
-                // namespace.folder.deviceId.state -> take namespace.folder.deviceId
-                if (parts.length >= 4) uniqueIds.add(parts.slice(0, 3).join('.')); 
+                if (parts.length >= 4) uniqueIds.add(parts.slice(0, parts.length - 1).join('.'));
             }
 
             for (const deviceId of uniqueIds) {
@@ -343,21 +345,37 @@ class GoogleBroadcast extends utils.Adapter {
                 if (obj && obj.native && obj.native.ip) {
                     const ip = obj.native.ip;
                     const port = obj.native.port || 8009;
+                    const relId = deviceId.split('.').slice(2).join('.');
+
+                    const client = new Client();
+                    let connected = false;
+                    const timeout = setTimeout(() => {
+                        if (!connected) { client.close(); this.setState(`${relId}.not-available`, true, true); }
+                    }, 5000);
+
+                    client.on('error', () => {
+                        client.close();
+                        if (!connected) { clearTimeout(timeout); this.setState(`${relId}.not-available`, true, true); }
+                    });
 
                     try {
-                        const client = new Client();
                         client.connect({ host: ip, port: port }, () => {
                              client.getStatus((err, status) => {
-                                 if (!err && status && status.volume) {
-                                     const vol = Math.round(status.volume.level * 100);
-                                     // Only update if changed to avoid log spam, but here we just set it
-                                     this.setState(`${deviceId.split('.').pop()}.volume`, vol, true); // Ack = true
+                                 clearTimeout(timeout);
+                                 connected = true;
+                                 if (!err && status) {
+                                     this.setState(`${relId}.not-available`, false, true);
+                                     if (status.volume) {
+                                         const vol = Math.round(status.volume.level * 100);
+                                         this.setState(`${relId}.volume`, vol, true); 
+                                     }
+                                 } else {
+                                     this.setState(`${relId}.not-available`, true, true);
                                  }
                                  client.close();
                              });
                         });
-                        client.on('error', () => client.close());
-                    } catch (e) { /* ignore */ }
+                    } catch (e) { clearTimeout(timeout); this.setState(`${relId}.not-available`, true, true); }
                 }
             }
         }
@@ -370,6 +388,7 @@ class GoogleBroadcast extends utils.Adapter {
                 for (const dev of devices) {
                     if (dev.native && dev.native.ip) this.castTTS(dev._id.split('.').pop(), dev.native.ip, state.val, null, null, dev.native.port);
                 }
+                this.setState(id, null, true);
             } else if (id.includes('.broadcast')) {
                 const parts = id.split('.');
                 const deviceId = parts[parts.length - 2];
@@ -378,6 +397,7 @@ class GoogleBroadcast extends utils.Adapter {
                 if (deviceObj && deviceObj.native && deviceObj.native.ip) {
                     this.castTTS(deviceId, deviceObj.native.ip, state.val, null, null, deviceObj.native.port);
                 }
+                this.setState(id, null, true);
             } else if (id.includes('.volume')) {
                 const parts = id.split('.');
                 const deviceId = parts[parts.length - 2];
@@ -398,8 +418,8 @@ class GoogleBroadcast extends utils.Adapter {
 
                     this.setVolume(targetIp, targetPort, state.val);
                 }
+                this.setState(id, state.val, true);
             }
-            this.setState(id, state.val, true); // Ack
         }
     }
 

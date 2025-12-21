@@ -92,6 +92,7 @@
     "googleApiKey": "",
     "ttsSpeed": 1,
     "scanInterval": 30,
+    "pollInterval": 30,
     "webServerIp": "",
     "webServerPort": 8091,
     "manualIp": ""
