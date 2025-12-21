@@ -17,7 +17,7 @@ This adapter allows you to send commands like "Dinner is ready" or "The washing 
 
 ### Step 1: Google Cloud Setup
 1.  Go to the [Google Cloud Console](https://console.cloud.google.com/).
-2.  **Create a New Project** (e.g., \`iobroker-broadcast\`).
+2.  **Create a New Project** (e.g., `iobroker-broadcast`).
 3.  **Enable API**:
     * Go to **APIs & Services > Library**.
     * Search for **"Google Assistant API"** and click **Enable**.
@@ -31,42 +31,53 @@ This adapter allows you to send commands like "Dinner is ready" or "The washing 
     * Go to **APIs & Services > Credentials**.
     * Click **+ Create Credentials > OAuth client ID**.
     * Application Type: **Desktop App** (or TV & Limited Input).
-    * Name: \`ioBroker Adapter\`.
-    * Click Create and **Download the JSON file**. Save it as \`credentials.json\`.
+    * Name: `ioBroker Adapter`.
+    * Click Create and **Download the JSON file**. Save it as `credentials.json`.
 6.  **Create API Key**:
     * Still in **Credentials**, click **+ Create Credentials > API Key**.
-    * Copy the key (starts with \`AIza...\`).
+    * Copy the key (starts with `AIza...`).
 
 ### Step 2: Register Device Model
-*Google has removed the web UI for this, so you must use the included script.*
+*Google has removed the web UI for this, so you must use the included script located in the `pybin` folder.*
 
-1.  **Open your ioBroker terminal.**
-2.  **Install Python dependencies:**
-    \`\`\`bash
-    sudo apt-get update && sudo apt-get install python3-pip python3-venv
-    python3 -m venv env
-    source env/bin/activate
-    pip install google-auth-oauthlib google-api-python-client requests urllib3
-    \`\`\`
-3.  **Upload your \`credentials.json\`** to this directory.
-4.  **Run the registration script:**
-    *(Replace parameters with your actual data)*
-    \`\`\`bash
-    # Syntax: python3 script.py [PROJECT_ID] [API_KEY] --name [NAME]
-    python3 node_modules/iobroker.googlebroadcast/admin/register_device_model.py iobroker-broadcast-123 AIzaSyDxxxxxxxxxxxx --name iobroker
-    \`\`\`
-5.  Follow the link to authorize.
-6.  **Copy the generated Model ID** (e.g., \`iobroker-model\`) for the next step.
+1.  **Navigate to the `pybin` directory:**
+    ```bash
+    cd node_modules/iobroker.googlebroadcast/pybin
+    ```
+    *(Or wherever you installed the adapter)*
+
+2.  **Setup Python Environment:**
+    *   **Windows:** Double-click `setup_venv.bat` or run it from CMD.
+    *   **Linux/Mac:** Run `bash setup_venv.sh`
+
+3.  **Activate the Environment:**
+    *   **Windows:** `venv\Scripts\activate`
+    *   **Linux/Mac:** `source venv/bin/activate`
+
+4.  **Prepare Credentials:**
+    *   Copy your downloaded `credentials.json` (from Step 1) into this `pybin` folder.
+
+5.  **Run the Registration Script:**
+    ```bash
+    # Syntax: python register_device.py [PROJECT_ID] [API_KEY]
+    python register_device.py iobroker-broadcast-123 AIzaSyDxxxxxxxxxxxx
+    ```
+    *(Replace with your actual Project ID and API Key)*
+
+6.  **Authorize & Copy Model ID:**
+    *   Follow the on-screen instructions to authorize.
+    *   The script will print the **Model ID** (e.g., `iobroker-model`).
+    *   Copy this Model ID for the next step.
 
 ### Step 3: Configure Adapter
 1.  Open the Adapter Settings in ioBroker.
-2.  **Google Credentials**: Paste the content of your \`credentials.json\`.
+2.  **Google Credentials**: Paste the content of your `credentials.json`.
 3.  **Device Model ID**: Paste the Model ID from Step 2.
 4.  **Authentication**:
     * Click **"1. Prepare Login Link"**.
     * Click the generated blue link to open Google Login.
     * Authorize the app (you may need to click "Advanced > Go to... (unsafe)").
-    * Copy the **Auth Code** (starts with \`4/0...\`).
+    * Copy the **Auth Code** (starts with `4/0...`).
     * Paste the code into the **"Step B"** box.
 5.  **Click Save and Close.**
 
@@ -75,8 +86,8 @@ The adapter will restart, generate tokens automatically, and turn green.
 ---
 
 ## Usage
-* **Broadcast All**: Write text to \`googlebroadcast.0.broadcast_all\`.
-* **Specific Device**: Write text to \`googlebroadcast.0.devices.[name].broadcast\`.
+* **Broadcast All**: Write text to `googlebroadcast.0.broadcast_all`.
+* **Specific Device**: Write text to `googlebroadcast.0.devices.[name].broadcast`.
 
 ## License
 MIT
