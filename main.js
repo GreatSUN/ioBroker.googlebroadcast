@@ -159,6 +159,7 @@ class GoogleBroadcast extends utils.Adapter {
         });
     }
 
+    // --- UPDATED: ROBUST CHROMECAST TTS ---
     async castTTS(deviceIp, text, lang) {
         if (!deviceIp) {
             this.log.error('Cannot Cast: Device IP missing.');
@@ -168,6 +169,7 @@ class GoogleBroadcast extends utils.Adapter {
         const speed = this.config.ttsSpeed || 1;
         
         try {
+            // 1. Generate URL
             const url = googleTTS.getAudioUrl(text, {
                 lang: finalLang,
                 slow: speed < 1,
@@ -178,39 +180,32 @@ class GoogleBroadcast extends utils.Adapter {
             const client = new Client();
             
             client.connect(deviceIp, () => {
-                client.launch(DefaultMediaReceiver, (err, player) => {
+                // 2. CHECK STATUS & FORCE STOP active apps to prevent NOT_ALLOWED
+                client.getSessions((err, sessions) => {
                     if (err) {
-                        this.log.error('Cast Launch Error: ' + err);
-                        client.close();
+                        this.log.error('Cast GetSessions Error: ' + err);
+                        // Try launching anyway
+                        this.launchMedia(client, url);
                         return;
                     }
-                    const media = {
-                        contentId: url,
-                        contentType: 'audio/mp3',
-                        streamType: 'BUFFERED'
-                    };
-                    
-                    player.load(media, { autoplay: true }, (err, status) => {
-                        if (err) {
-                            this.log.error('Cast Load Error: ' + err);
-                            client.close();
-                        } else {
-                            this.log.debug('Playback started. Waiting for end...');
-                        }
-                    });
 
-                    // Wait for playback to finish before closing connection
-                    player.on('status', (status) => {
-                        if (status && status.playerState === 'IDLE' && status.idleReason === 'FINISHED') {
-                            this.log.debug('Playback finished. Closing connection.');
-                            client.close();
-                        }
-                    });
+                    const activeSession = sessions.find(s => s.appId !== 'CC1AD845'); // DefaultMediaReceiver ID
+                    
+                    if (activeSession) {
+                        this.log.debug(`Stopping active session ${activeSession.displayName} to take over.`);
+                        client.stop(activeSession, (err) => {
+                            if (err) this.log.warn('Failed to stop active session: ' + err);
+                            // Proceed to launch regardless
+                            this.launchMedia(client, url);
+                        });
+                    } else {
+                        // No conflicting session, just launch
+                        this.launchMedia(client, url);
+                    }
                 });
             });
             
             client.on('error', (err) => {
-                // Ignore "closed" errors that happen on normal shutdown
                 if (err.message && !err.message.includes('closed')) {
                     this.log.error('Cast Client Error: ' + err);
                 }
@@ -220,6 +215,38 @@ class GoogleBroadcast extends utils.Adapter {
         } catch (e) {
             this.log.error('TTS Generation Error: ' + e.message);
         }
+    }
+
+    // Helper for Launching
+    launchMedia(client, url) {
+        client.launch(DefaultMediaReceiver, (err, player) => {
+            if (err) {
+                this.log.error('Cast Launch Error: ' + err);
+                client.close();
+                return;
+            }
+            const media = {
+                contentId: url,
+                contentType: 'audio/mp3',
+                streamType: 'BUFFERED'
+            };
+            
+            player.load(media, { autoplay: true }, (err, status) => {
+                if (err) {
+                    this.log.error('Cast Load Error: ' + err);
+                    client.close();
+                } else {
+                    this.log.debug('Playback started.');
+                }
+            });
+
+            player.on('status', (status) => {
+                if (status && status.playerState === 'IDLE' && status.idleReason === 'FINISHED') {
+                    this.log.debug('Playback finished. Closing connection.');
+                    client.close();
+                }
+            });
+        });
     }
 
     initMdns() {
@@ -235,6 +262,7 @@ class GoogleBroadcast extends utils.Adapter {
     }
 
     async processMdnsResponse(response) {
+        // ... (Same mDNS logic as before) ...
         const records = [...response.answers, ...response.additionals];
         
         const ptr = records.find(r => r.type === 'PTR' && r.name === '_googlecast._tcp.local');
