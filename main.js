@@ -357,15 +357,11 @@ class GoogleBroadcast extends utils.Adapter {
         this.log.debug('Attempting to Launch DefaultMediaReceiver...');
         client.launch(DefaultMediaReceiver, (err, player) => {
             if (err) {
-                // If launch fails with NOT_ALLOWED, try the "Kick" strategy once
                 if (!retried) {
                     this.log.warn(`Launch failed (${JSON.stringify(err)}). Kicking platform and retrying...`);
-                    // We send a generic STOP to the receiver to force close any hidden apps
                     client.stop({ sessionId: '00000000-0000-0000-0000-000000000000' }, () => {
                         setTimeout(() => this.launchNew(client, url, true), 750);
                     });
-                    // Some devices respond better if we also just try to close the client connection wrapper
-                    // But client.stop with a dummy ID is the standard "Kick" way
                 } else {
                     this.log.error(`Launch Error (Persistent): ${err.message || JSON.stringify(err)}`);
                     client.close();
@@ -392,7 +388,6 @@ class GoogleBroadcast extends utils.Adapter {
             }
         });
         player.on('status', (s) => {
-            // this.log.debug(`Player Status: ${JSON.stringify(s)}`);
             if (s && s.playerState === 'IDLE') {
                 this.log.debug('Player Idle. Closing connection.');
                 client.close();
@@ -439,6 +434,9 @@ class GoogleBroadcast extends utils.Adapter {
         const ip = aRecord ? aRecord.data : null;
 
         if (!friendlyName) return;
+        
+        // Log found devices to help debug Stereo Pair detection
+        this.log.debug(`mDNS Discovered: Name="${friendlyName}", Model="${model}", IP=${ip}`);
 
         const cleanId = friendlyName.replace(/[^a-zA-Z0-9_-]/g, '_');
         const isGroup = (model === 'Google Cast Group');
