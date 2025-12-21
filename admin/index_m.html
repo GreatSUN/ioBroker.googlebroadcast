@@ -36,7 +36,8 @@
             sendTo(target, 'getInterfaces', {}, function (response) {
                 console.log('GoogleBroadcast: sendTo response received', response);
                 if (response && response.result) {
-                    mergeInterfaces(response.result, settings.webServerIp);
+                    // Pass onChange to helper function
+                    mergeInterfaces(response.result, settings.webServerIp, onChange);
                 } else {
                     console.log('GoogleBroadcast: sendTo response empty or invalid');
                 }
@@ -65,7 +66,8 @@
                                  });
                              }
                              console.log('GoogleBroadcast: Parsed host interfaces', list);
-                             mergeInterfaces(list, settings.webServerIp);
+                             // Pass onChange to helper function
+                             mergeInterfaces(list, settings.webServerIp, onChange);
                         } else {
                             console.log('GoogleBroadcast: Host object does not contain networkInterfaces or invalid structure');
                         }
@@ -99,7 +101,8 @@
             });
         }
 
-        function mergeInterfaces(newList, savedIp) {
+        // Added onChange parameter
+        function mergeInterfaces(newList, savedIp, onChange) {
             console.log('GoogleBroadcast: Merging interfaces', newList);
             if (!newList || newList.length === 0) return;
 
@@ -126,16 +129,13 @@
                 $sel.append('<option value="' + savedIp + '" selected>' + savedIp + ' (Saved)</option>');
             }
 
-            // --- FIXED: Safe Materialize CSS Initialization ---
+            // Safe Materialize CSS Initialization
             try {
                 if (typeof M !== 'undefined' && M.FormSelect && M.FormSelect.init) {
-                    // Modern Materialize (Vanilla JS)
                     M.FormSelect.init($sel[0]);
                 } else if ($sel.formSelect) {
-                    // Modern Materialize (jQuery wrapper)
                     $sel.formSelect();
                 } else if ($sel.material_select) {
-                    // Legacy Materialize
                     $sel.material_select();
                 } else {
                     console.warn('GoogleBroadcast: No Select initialization method found (formSelect/material_select).');
@@ -143,11 +143,14 @@
             } catch (e) {
                 console.error('GoogleBroadcast: Error initializing select:', e);
             }
-            // --------------------------------------------------
 
+            // Trigger onChange properly now that we have the function
             $sel.on('change', function() {
-                // Trigger change event manually since we rebuilt the select
-                if (typeof onChange === 'function') onChange();
+                if (typeof onChange === 'function') {
+                    onChange();
+                } else {
+                    console.warn('GoogleBroadcast: onChange is not a function in mergeInterfaces scope');
+                }
             });
         }
 
