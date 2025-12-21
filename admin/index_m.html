@@ -19,12 +19,14 @@
                     $key.prop('checked', settings[id]).on('change', () => onChange());
                 } else {
                     $key.val(settings[id]).on('change', () => onChange()).on('keyup', () => onChange());
-                    $key.on('change', () => onChange()); // Ensure selects trigger change
+                    $key.on('change', () => onChange());
                 }
             });
-            // Initial UI state
+            
+            // Initial UI Update
             updateUI();
             $('#broadcastMode').on('change', updateUI);
+            $('#ttsEngine').on('change', updateUI);
             onChange(false);
 
             $('#btn_generate_link').on('click', function() {
@@ -50,10 +52,22 @@
 
         function updateUI() {
             var mode = $('#broadcastMode').val();
+            var engine = $('#ttsEngine').val();
+            
+            // 1. Show/Hide Assistant or TTS sections
             if (mode === 'cast') {
                 $('.assistant-only').hide();
+                $('.cast-only').show();
             } else {
                 $('.assistant-only').show();
+                $('.cast-only').hide();
+            }
+
+            // 2. Show/Hide API Key based on TTS Engine
+            if (mode === 'cast' && engine === 'google_cloud') {
+                $('.api-key-field').show();
+            } else {
+                $('.api-key-field').hide();
             }
         }
 
@@ -95,8 +109,8 @@
                 <div class="col s6">
                     <div class="input-field">
                         <select id="broadcastMode" class="value">
-                            <option value="assistant">Google Assistant SDK (Official Broadcast)</option>
-                            <option value="cast">Chromecast / Google Home (TTS Audio)</option>
+                            <option value="assistant">Google Assistant SDK (Official)</option>
+                            <option value="cast">Chromecast / Google Home (TTS)</option>
                         </select>
                         <label for="broadcastMode">Broadcast Method</label>
                     </div>
@@ -106,6 +120,25 @@
                         <input type="text" id="language" class="value" placeholder="en-US" />
                         <label for="language">Default Language (en-US, de-DE)</label>
                     </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="row cast-only" style="display:none; background-color: #f1f8e9; padding: 10px; border-radius: 5px;">
+            <div class="col s6">
+                <div class="input-field">
+                    <select id="ttsEngine" class="value">
+                        <option value="free">Free (Google Translate)</option>
+                        <option value="google_cloud">Google Cloud (High Quality)</option>
+                    </select>
+                    <label for="ttsEngine">TTS Engine</label>
+                </div>
+            </div>
+            <div class="col s6 api-key-field" style="display:none;">
+                <div class="input-field">
+                    <input type="password" id="googleApiKey" class="value" />
+                    <label for="googleApiKey">Google Cloud API Key</label>
+                    <span class="helper-text">Required for WaveNet/Neural2 voices</span>
                 </div>
             </div>
         </div>

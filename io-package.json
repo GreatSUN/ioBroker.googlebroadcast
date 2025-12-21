@@ -1,22 +1,13 @@
 {
   "common": {
     "name": "googlebroadcast",
-    "version": "0.3.0",
+    "version": "0.4.0",
     "news": {
+      "0.4.0": {
+        "en": "Added support for high-quality Google Cloud TTS (WaveNet/Neural2)"
+      },
       "0.3.0": {
-        "en": "Added Chromecast TTS support for reliable targeting via IP address"
-      },
-      "0.2.1": {
-        "en": "Extended/fixed language support for different device/assistant languages"
-      },
-      "0.2.0": {
-        "en": "Added language support and fixed double broadcasts"
-      },
-      "0.1.0": {
-        "en": "Beta release"
-      },
-      "0.0.1": {
-        "en": "initial release"
+        "en": "Added Chromecast TTS support"
       }
     },
     "title": "Google Assistant Broadcast",
@@ -58,6 +49,8 @@
     "deviceModelId": "iobroker-model",
     "language": "en-US",
     "broadcastMode": "assistant",
+    "ttsEngine": "free",
+    "googleApiKey": "",
     "ttsSpeed": 1,
     "scanInterval": 30
   },
