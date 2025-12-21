@@ -23,23 +23,20 @@
             });
             onChange(false);
 
-            // LOGIC: Generate Link on Button Click (Client-Side)
+            // 1. Generate Link
             $('#btn_generate_link').on('click', function() {
                 var json = $('#jsonCredentials').val();
                 if(!json) {
-                    alert(_('Please paste credentials.json first'));
+                    alert(_('Please paste credentials.json and SAVE the adapter first'));
                     return;
                 }
-                
                 try {
                     var creds = JSON.parse(json);
                     var keys = creds.installed || creds.web;
-                    
                     if (!keys || !keys.client_id) {
-                        alert(_('Error') + ': Invalid JSON. Missing client_id.');
+                        alert('Invalid JSON. Missing client_id.');
                         return;
                     }
-
                     var scope = encodeURIComponent('https://www.googleapis.com/auth/assistant-sdk-prototype');
                     var redirect = encodeURIComponent('urn:ietf:wg:oauth:2.0:oob');
                     var url = 'https://accounts.google.com/o/oauth2/v2/auth?access_type=offline&scope=' + scope + '&response_type=code&client_id=' + keys.client_id + '&redirect_uri=' + redirect;
@@ -47,16 +44,41 @@
                     $('#auth_link').attr('href', url);
                     $('#auth_link_container').show();
                     $('#auth_step_2').show();
-
                 } catch(e) {
-                    alert(_('Error') + ': ' + e);
+                    alert('Error: ' + e);
                 }
             });
+
+            // 2. Exchange Code (Send Message to Adapter)
+            $('#btn_exchange').on('click', function() {
+                var code = $('#authCode').val();
+                var json = $('#jsonCredentials').val(); // Used locally for Client ID
+                
+                if (!json) { alert('Missing credentials'); return; }
+                if (!code) { alert('Missing code'); return; }
+
+                var creds = JSON.parse(json);
+                var keys = creds.installed || creds.web;
+
+                sendTo(null, 'exchangeCode', { 
+                    code: code,
+                    clientId: keys.client_id,
+                    clientSecret: keys.client_secret
+                }, function(res) {
+                    if(res && res.tokens) {
+                        M.toast({html: 'Tokens generated! Adapter connecting...'});
+                        // Clear the code input for security
+                        $('#authCode').val('');
+                    } else {
+                        alert('Error: ' + ((res && res.error) ? res.error : 'Unknown error'));
+                    }
+                });
+            });
             
-            // BUTTON: Scan
+            // 3. Scan
             $('#btn_scan').on('click', function() {
                 sendTo(null, 'scan', {}, function(res) {
-                    M.toast({html: _('Scan started in background')});
+                    M.toast({html: 'Scan started'});
                 });
             });
         }
@@ -76,24 +98,12 @@
     </script>
     
     <style>
-        .section { margin-bottom: 20px; border-bottom: 1px solid #ccc; padding-bottom: 10px; }
-        .step { font-weight: bold; color: #2196f3; }
         .auth-link-box { 
-            background-color: #1565c0 !important; 
-            color: #ffffff !important;
-            padding: 15px; 
-            border-radius: 4px; 
-            border: 1px solid #2196f3; 
-            margin-top: 10px;
-            text-align: center;
+            background-color: #1565c0 !important; color: #ffffff !important;
+            padding: 15px; border-radius: 4px; margin-top: 10px; text-align: center;
         }
         .auth-link-box a {
-            color: #ffca28 !important;
-            font-size: 1.3em;
-            font-weight: bold;
-            text-decoration: underline;
-            display: block;
-            margin-top: 5px;
+            color: #ffca28 !important; font-size: 1.3em; font-weight: bold; text-decoration: underline; display: block; margin-top: 5px;
         }
     </style>
 </head>
@@ -108,7 +118,7 @@
         <div class="row">
             <div class="col s12">
                 <h5 class="translate">Google Credentials</h5>
-                <p class="translate">Paste the content of your downloaded credentials.json (OAuth Client) here.</p>
+                <p class="translate">1. Paste credentials.json here and CLICK SAVE at the bottom.</p>
                 <textarea id="jsonCredentials" class="value materialize-textarea" style="font-family: monospace; font-size: 0.8em; min-height: 100px;"></textarea>
             </div>
         </div>
@@ -116,46 +126,38 @@
         <div class="row">
             <div class="col s12">
                 <h5 class="translate">Authentication</h5>
-                
-                <p><span class="step translate">Step A: Click to open Google Login</span></p>
-                <a class="waves-effect waves-light btn translate" id="btn_generate_link">1. Prepare Login Link</a>
+                <a class="waves-effect waves-light btn translate" id="btn_generate_link">2. Get Auth Link</a>
                 
                 <div id="auth_link_container" style="display:none;">
                     <div class="auth-link-box">
-                        <span class="translate">Click this link to open Google Login:</span><br/><br/>
-                        <a href="#" target="_blank" id="auth_link">OPEN GOOGLE LOGIN PAGE</a>
+                        <span class="translate">Click to Login:</span>
+                        <a href="#" target="_blank" id="auth_link">OPEN GOOGLE LOGIN</a>
                     </div>
                 </div>
 
-                <div id="auth_step_2" style="margin-top: 25px;">
-                    <p><span class="step translate">Step B: Paste the code and CLICK SAVE at bottom</span></p>
-                    <input type="text" id="authCode" class="value" placeholder="Paste 4/0A... here" />
+                <div id="auth_step_2" style="margin-top: 25px; display:none;">
+                    <p class="translate">3. Paste Code & Generate Tokens (Instant)</p>
+                    <input type="text" id="authCode" placeholder="Paste 4/0A... here" />
+                    <a class="waves-effect waves-light btn green translate" id="btn_exchange">Generate Tokens</a>
                 </div>
             </div>
         </div>
 
         <div class="row">
-            <div class="col s12">
-                <h5 class="translate">Token Storage (Automatic)</h5>
-                <textarea id="savedTokens" class="value materialize-textarea" readonly style="background: #f0f0f0; color: #333;"></textarea>
-            </div>
-        </div>
-
-        <div class="row">
             <div class="col s6">
-                <h5 class="translate">General Settings</h5>
+                <h5>Settings</h5>
                 <div class="input-field">
                     <input type="text" id="deviceModelId" class="value" />
-                    <label for="deviceModelId" class="translate">Device Model ID</label>
+                    <label for="deviceModelId">Device Model ID</label>
                 </div>
                 <div class="input-field">
                     <input type="number" id="scanInterval" class="value" />
-                    <label for="scanInterval" class="translate">Scan Interval (minutes)</label>
+                    <label for="scanInterval">Scan Interval (min)</label>
                 </div>
             </div>
             <div class="col s6">
-                <h5 class="translate">Actions</h5>
-                <a class="waves-effect waves-light btn blue translate" id="btn_scan">Scan Devices Now</a>
+                <h5>Actions</h5>
+                <a class="waves-effect waves-light btn blue" id="btn_scan">Scan Devices</a>
             </div>
         </div>
     </div>
