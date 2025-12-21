@@ -23,7 +23,6 @@
                 }
             });
             
-            // Initial UI Update
             updateUI();
             $('#broadcastMode').on('change', updateUI);
             $('#ttsEngine').on('change', updateUI);
@@ -54,7 +53,6 @@
             var mode = $('#broadcastMode').val();
             var engine = $('#ttsEngine').val();
             
-            // 1. Show/Hide Assistant or TTS sections
             if (mode === 'cast') {
                 $('.assistant-only').hide();
                 $('.cast-only').show();
@@ -63,7 +61,6 @@
                 $('.cast-only').hide();
             }
 
-            // 2. Show/Hide API Key based on TTS Engine
             if (mode === 'cast' && engine === 'google_cloud') {
                 $('.api-key-field').show();
             } else {
@@ -125,6 +122,8 @@
         </div>
 
         <div class="row cast-only" style="display:none; background-color: #f1f8e9; padding: 10px; border-radius: 5px;">
+            <div class="col s12"><h5>Chromecast TTS Settings</h5></div>
+            
             <div class="col s6">
                 <div class="input-field">
                     <select id="ttsEngine" class="value">
@@ -138,7 +137,20 @@
                 <div class="input-field">
                     <input type="password" id="googleApiKey" class="value" />
                     <label for="googleApiKey">Google Cloud API Key</label>
-                    <span class="helper-text">Required for WaveNet/Neural2 voices</span>
+                </div>
+            </div>
+
+            <div class="col s6">
+                <div class="input-field">
+                    <input type="text" id="webServerIp" class="value" placeholder="Leave empty for auto-detect" />
+                    <label for="webServerIp">Own IP for Web Server (Streaming Interface)</label>
+                    <span class="helper-text">Enter the IP of ioBroker reachable by the Cast devices (e.g. 192.168.63.x)</span>
+                </div>
+            </div>
+            <div class="col s6">
+                <div class="input-field">
+                    <input type="number" id="webServerPort" class="value" placeholder="8091" />
+                    <label for="webServerPort">Web Server Port</label>
                 </div>
             </div>
         </div>
@@ -146,7 +158,6 @@
         <div class="row assistant-only">
             <div class="col s12">
                 <h5 class="translate">Assistant Credentials</h5>
-                <p class="translate">Required only for "Google Assistant SDK" mode.</p>
                 <div class="col s12">
                     <textarea id="jsonCredentials" class="value materialize-textarea" placeholder="Paste credentials.json here..." style="font-family: monospace; font-size: 0.8em; min-height: 80px;"></textarea>
                 </div>
@@ -169,12 +180,6 @@
                     <div class="input-field">
                         <input type="number" id="scanInterval" class="value" />
                         <label for="scanInterval">Scan Interval (min)</label>
-                    </div>
-                </div>
-                <div class="col s4">
-                     <div class="input-field">
-                        <input type="text" id="deviceModelId" class="value" />
-                        <label for="deviceModelId">Device Model ID (Assistant Mode only)</label>
                     </div>
                 </div>
                 <div class="col s4" style="margin-top: 20px;">

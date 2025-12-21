@@ -1,10 +1,13 @@
 {
   "common": {
     "name": "googlebroadcast",
-    "version": "0.4.0",
+    "version": "0.4.1",
     "news": {
+      "0.4.1": {
+        "en": "Added configuration for Web Server IP/Interface and Port"
+      },
       "0.4.0": {
-        "en": "Added support for high-quality Google Cloud TTS (WaveNet/Neural2)"
+        "en": "Added support for high-quality Google Cloud TTS"
       },
       "0.3.0": {
         "en": "Added Chromecast TTS support"
@@ -52,7 +55,9 @@
     "ttsEngine": "free",
     "googleApiKey": "",
     "ttsSpeed": 1,
-    "scanInterval": 30
+    "scanInterval": 30,
+    "webServerIp": "",
+    "webServerPort": 8091
   },
   "objects": [],
   "instanceObjects": [

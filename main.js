@@ -43,11 +43,21 @@ class GoogleBroadcast extends utils.Adapter {
         this.credsPath = path.join(os.tmpdir(), `iobroker_google_${this.namespace}_creds.json`);
         this.tokensPath = path.join(os.tmpdir(), `iobroker_google_${this.namespace}_tokens.json`);
 
-        this.findLocalIp();
+        // Load config
+        this.serverPort = this.config.webServerPort || 8091;
+        
+        // Determine IP
+        if (this.config.webServerIp) {
+            this.localIp = this.config.webServerIp;
+            this.log.info(`Using configured Web Server IP: ${this.localIp}`);
+        } else {
+            this.findLocalIp();
+        }
+
         this.startWebServer();
 
         if (this.config.broadcastMode === 'cast') {
-            this.log.info(`Starting in Chromecast TTS Mode (${this.config.ttsEngine === 'google_cloud' ? 'Google Cloud' : 'Free'}). Hosting at http://${this.localIp}:${this.serverPort}`);
+            this.log.info(`Starting in Chromecast TTS Mode. Hosting at http://${this.localIp}:${this.serverPort}`);
             this.setState('info.connection', true, true);
         } else {
             await this.initGoogleAssistant();
@@ -68,12 +78,23 @@ class GoogleBroadcast extends utils.Adapter {
 
     findLocalIp() {
         const interfaces = os.networkInterfaces();
+        const found = [];
         for (const name of Object.keys(interfaces)) {
             for (const iface of interfaces[name]) {
                 if ('IPv4' !== iface.family || iface.internal) continue;
-                this.localIp = iface.address;
-                return;
+                found.push(iface.address);
+                // Prefer an IP that looks like a standard LAN (192.168... or 10...)
+                if (!this.localIp && !iface.address.startsWith('172.')) { 
+                     this.localIp = iface.address;
+                }
             }
+        }
+        // Fallback to first found if no "nice" one was found
+        if (!this.localIp && found.length > 0) this.localIp = found[0];
+
+        this.log.info(`Auto-detected Local IPs: ${found.join(', ')}. Using: ${this.localIp}`);
+        if (found.length > 1) {
+            this.log.info('Tip: If casting fails, configure the correct interface/IP in the Adapter Settings.');
         }
     }
 
@@ -97,15 +118,18 @@ class GoogleBroadcast extends utils.Adapter {
             res.end();
         });
 
-        this.server.listen(this.serverPort, () => {
-            this.log.debug(`TTS Web Server listening on port ${this.serverPort}`);
-        });
-        
-        this.server.on('error', (e) => this.log.error('Web Server Error: ' + e.message));
+        try {
+            this.server.listen(this.serverPort, () => {
+                this.log.debug(`TTS Web Server listening on port ${this.serverPort}`);
+            });
+            this.server.on('error', (e) => this.log.error('Web Server Error: ' + e.message));
+        } catch (e) {
+            this.log.error('Failed to start Web Server: ' + e.message);
+        }
     }
 
     async initGoogleAssistant() {
-        // ... (Assistant Init kept same) ...
+        // ... (No changes here) ...
         const credentialsJson = this.config.jsonCredentials;
         const tokenState = await this.getStateAsync('tokens');
         let tokensJson = tokenState && tokenState.val ? tokenState.val : null;
@@ -212,40 +236,28 @@ class GoogleBroadcast extends utils.Adapter {
         try {
             let buffer = null;
 
-            // --- BRANCHING LOGIC ---
             if (this.config.ttsEngine === 'google_cloud') {
-                // GOOGLE CLOUD TTS
                 if (!this.config.googleApiKey) {
                     this.log.error('Google Cloud API Key missing. Please configure in Admin.');
                     return;
                 }
-                
-                // Voice selection: Use "voice" state if set, else let API decide based on lang
                 const requestBody = {
                     input: { text: text },
                     voice: { languageCode: finalLang },
                     audioConfig: { audioEncoding: 'MP3', speakingRate: speed }
                 };
-
-                // If specific voice (e.g. "de-DE-Wavenet-A") is provided, use it
                 if (voice && voice.length > 2) {
                     requestBody.voice.name = voice;
                 }
-
                 const apiUrl = `https://texttospeech.googleapis.com/v1/text:synthesize?key=${this.config.googleApiKey}`;
                 const response = await axios.post(apiUrl, requestBody);
-                
                 if (response.data && response.data.audioContent) {
                     buffer = Buffer.from(response.data.audioContent, 'base64');
                 } else {
                     throw new Error('Google Cloud API returned no audio content.');
                 }
-
             } else {
-                // FREE TTS (Google Translate)
-                // Use "voice" state as lang override if it's just a language code
                 const effectiveLang = (voice && voice.length === 2) ? voice : finalLang;
-                
                 const ttsUrl = googleTTS.getAudioUrl(text, {
                     lang: effectiveLang,
                     slow: speed < 1,
@@ -256,11 +268,9 @@ class GoogleBroadcast extends utils.Adapter {
                 const response = await axios.get(ttsUrl, { responseType: 'arraybuffer' });
                 buffer = response.data;
             }
-            // -----------------------
 
             if (!buffer) return;
 
-            // Store and Cast
             this.audioBuffers.set(deviceId, buffer);
             const localUrl = `http://${this.localIp}:${this.serverPort}/tts/${deviceId}.mp3?t=${Date.now()}`;
             this.log.debug(`Casting ${localUrl} to ${deviceIp}`);
@@ -329,7 +339,6 @@ class GoogleBroadcast extends utils.Adapter {
     }
 
     async processMdnsResponse(response) {
-        // ... (Standard mDNS parsing) ...
         const records = [...response.answers, ...response.additionals];
         const ptr = records.find(r => r.type === 'PTR' && r.name === '_googlecast._tcp.local');
         if (!ptr) return;
@@ -388,15 +397,8 @@ class GoogleBroadcast extends utils.Adapter {
         await this.setObjectNotExistsAsync(`${folder}.${cleanId}.language`, {
             type: 'state', common: { name: `Language`, type: 'string', role: 'text', read: true, write: true, def: this.config.language || 'en-US' }, native: {}
         });
-
         await this.setObjectNotExistsAsync(`${folder}.${cleanId}.voice`, {
-            type: 'state', 
-            common: { 
-                name: `TTS Voice/Accent`, 
-                type: 'string', role: 'text', read: true, write: true, def: '',
-                desc: 'Lang code or WaveNet name'
-            },
-            native: {}
+            type: 'state', common: { name: `TTS Voice/Accent`, type: 'string', role: 'text', read: true, write: true, def: '' }, native: {}
         });
     }
 
