@@ -301,14 +301,24 @@ class GoogleBroadcast extends utils.Adapter {
             this.log.debug(`Casting ${localUrl} to ${deviceIp}`);
 
             const client = new Client();
+
+            client.on('error', (err) => {
+                 this.log.error(`Cast Client Error (${deviceIp}): ${err.message || JSON.stringify(err)}`);
+                 try { client.close(); } catch(e) {}
+            });
+
+            this.log.debug(`Connecting to Cast Device: ${deviceIp}...`);
             client.connect(deviceIp, () => {
+                this.log.debug(`Connected to ${deviceIp}. Fetching sessions...`);
                 client.getSessions((err, sessions) => {
                     if (err) {
-                        this.log.warn(`Could not get sessions for ${deviceIp}, forcing launch.`);
+                        this.log.warn(`Could not get sessions for ${deviceIp}: ${err}. Forcing launch.`);
                         this.launchNew(client, localUrl);
                         return;
                     }
                     
+                    this.log.debug(`Sessions on ${deviceIp}: ${JSON.stringify(sessions)}`);
+
                     const active = sessions.find(s => s.appId === 'CC1AD845');
                     const other = sessions.find(s => s.appId !== 'CC1AD845');
 
@@ -319,22 +329,21 @@ class GoogleBroadcast extends utils.Adapter {
                                 this.log.warn(`Join failed (${err}), trying to launch new...`);
                                 this.launchNew(client, localUrl);
                             } else {
+                                this.log.debug('Joined existing session successfully.');
                                 this.loadMedia(player, localUrl, client);
                             }
                         });
                     } else if (other) {
                         this.log.debug(`Other app active on ${deviceIp}, stopping it...`);
                         client.stop(other, () => {
+                             this.log.debug('Stopped other app. Waiting 500ms...');
                              setTimeout(() => this.launchNew(client, localUrl), 500); 
                         });
                     } else {
+                        this.log.debug('No active session. Launching new...');
                         this.launchNew(client, localUrl);
                     }
                 });
-            });
-            client.on('error', (err) => {
-                this.log.error(`Cast Client Error for ${deviceIp}: ${err.message || err}`);
-                try { client.close(); } catch(e) {}
             });
             
             setTimeout(() => { if(this.audioBuffers.has(deviceId)) this.audioBuffers.delete(deviceId); }, 60000);
@@ -345,12 +354,14 @@ class GoogleBroadcast extends utils.Adapter {
     }
 
     launchNew(client, url) {
+        this.log.debug('Attempting to Launch DefaultMediaReceiver...');
         client.launch(DefaultMediaReceiver, (err, player) => {
             if (err) {
-                this.log.error(`Launch Error: ${err}`);
+                this.log.error(`Launch Error: ${err.message || JSON.stringify(err)}`);
                 client.close();
                 return;
             }
+            this.log.debug('Launch successful. Loading media...');
             this.loadMedia(player, url, client);
         });
     }
@@ -363,12 +374,18 @@ class GoogleBroadcast extends utils.Adapter {
         };
         player.load(media, { autoplay: true }, (err, status) => {
             if (err) {
-                this.log.error(`Load Error: ${err}`);
+                this.log.error(`Load Error: ${err.message || JSON.stringify(err)}`);
                 client.close();
+            } else {
+                this.log.debug('Media loaded successfully. Playing...');
             }
         });
         player.on('status', (s) => {
-            if (s && s.playerState === 'IDLE') client.close();
+            // this.log.debug(`Player Status: ${JSON.stringify(s)}`);
+            if (s && s.playerState === 'IDLE') {
+                this.log.debug('Player Idle. Closing connection.');
+                client.close();
+            }
         });
     }
 
