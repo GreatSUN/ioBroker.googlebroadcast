@@ -10,14 +10,14 @@
     <script type="text/javascript" src="words.js"></script>
 
     <script type="text/javascript">
+        var interfacesList = [];
+
         function load(settings, onChange) {
             if (!settings) return;
             
-            // Populate checkboxes and basic inputs first
             $('.value').each(function () {
                 var $key = $(this);
                 var id = $key.attr('id');
-                // Skip the dropdown for now, we load it dynamically
                 if (id === 'webServerIp') return; 
 
                 if ($key.attr('type') === 'checkbox') {
@@ -28,40 +28,30 @@
                 }
             });
 
-            // LOAD INTERFACES DIRECTLY FROM HOST OBJECT (Works even if adapter is stopped)
-            // 1. Get the current instance info to find the host
+            // 1. Try to get interfaces from running adapter
+            sendTo(null, 'getInterfaces', {}, function (response) {
+                if (response && response.result) {
+                    mergeInterfaces(response.result, settings.webServerIp);
+                }
+            });
+
+            // 2. Also try to get interfaces from Host Object (Offline backup)
             socket.emit('getObject', 'system.adapter.' + adapter + '.' + instance, function (err, obj) {
                 if (!err && obj && obj.common && obj.common.host) {
-                    // 2. Get the host object containing network stats
                     socket.emit('getObject', 'system.host.' + obj.common.host, function (err, hostObj) {
-                        var $sel = $('#webServerIp');
-                        $sel.append('<option value="">Auto-detect (Default)</option>');
-                        var found = false;
-
                         if (!err && hostObj && hostObj.native && hostObj.native.hardware && hostObj.native.hardware.networkInterfaces) {
                              var interfaces = hostObj.native.hardware.networkInterfaces;
-                             // Iterate over interfaces
+                             var list = [];
                              for (var ifaceName in interfaces) {
                                  if (!interfaces.hasOwnProperty(ifaceName)) continue;
                                  interfaces[ifaceName].forEach(function(iface) {
-                                     // Filter for IPv4 and not internal
                                      if (iface.family === 'IPv4' && !iface.internal) {
-                                         var selected = (iface.address === settings.webServerIp) ? 'selected' : '';
-                                         if (selected) found = true;
-                                         $sel.append('<option value="' + iface.address + '" ' + selected + '>' + ifaceName + ' - ' + iface.address + '</option>');
+                                         list.push({ name: ifaceName, address: iface.address });
                                      }
                                  });
                              }
+                             mergeInterfaces(list, settings.webServerIp);
                         }
-
-                        // If saved IP is not in the list (and not empty), add it manually to prevent data loss
-                        if (settings.webServerIp && !found) {
-                             $sel.append('<option value="' + settings.webServerIp + '" selected>' + settings.webServerIp + ' (Saved)</option>');
-                        }
-
-                        // Initialize Materialize Select
-                        $sel.formSelect();
-                        $sel.on('change', () => onChange());
                     });
                 }
             });
@@ -89,6 +79,37 @@
             
             $('#btn_scan').on('click', function() {
                 sendTo(null, 'scan', {}, function(res) { M.toast({html: 'Scan started'}); });
+            });
+        }
+
+        function mergeInterfaces(newList, savedIp) {
+            // Merge into global list preventing duplicates
+            newList.forEach(function(item) {
+                if (!interfacesList.find(x => x.address === item.address)) {
+                    interfacesList.push(item);
+                }
+            });
+
+            var $sel = $('#webServerIp');
+            $sel.empty(); // Clear to rebuild
+            $sel.append('<option value="">Auto-detect (Default)</option>');
+            
+            var found = false;
+            interfacesList.forEach(function(iface) {
+                var selected = (iface.address === savedIp) ? 'selected' : '';
+                if (selected) found = true;
+                $sel.append('<option value="' + iface.address + '" ' + selected + '>' + iface.name + ' - ' + iface.address + '</option>');
+            });
+
+            // If saved IP is not in the list, add it
+            if (savedIp && !found) {
+                $sel.append('<option value="' + savedIp + '" selected>' + savedIp + ' (Saved)</option>');
+            }
+
+            $sel.formSelect();
+            $sel.on('change', function() {
+                // Trigger change event manually since we rebuilt the select
+                if (typeof onChange === 'function') onChange();
             });
         }
 

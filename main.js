@@ -43,10 +43,8 @@ class GoogleBroadcast extends utils.Adapter {
         this.credsPath = path.join(os.tmpdir(), `iobroker_google_${this.namespace}_creds.json`);
         this.tokensPath = path.join(os.tmpdir(), `iobroker_google_${this.namespace}_tokens.json`);
 
-        // Load config
         this.serverPort = this.config.webServerPort || 8091;
         
-        // Determine IP
         if (this.config.webServerIp) {
             this.localIp = this.config.webServerIp;
             this.log.info(`Using configured Web Server IP: ${this.localIp}`);
@@ -91,9 +89,6 @@ class GoogleBroadcast extends utils.Adapter {
         if (!this.localIp && found.length > 0) this.localIp = found[0];
 
         this.log.info(`Auto-detected Local IPs: ${found.join(', ')}. Using: ${this.localIp}`);
-        if (found.length > 1) {
-            this.log.info('Tip: If casting fails, configure the correct interface/IP in the Adapter Settings.');
-        }
     }
 
     startWebServer() {
@@ -195,6 +190,19 @@ class GoogleBroadcast extends utils.Adapter {
             if (obj.command === 'scan') {
                 this.scanNetwork();
                 if (obj.callback) this.sendTo(obj.from, obj.command, { result: 'OK' }, obj.callback);
+            }
+            // --- RESTORED: Handle Interface Request ---
+            if (obj.command === 'getInterfaces') {
+                const interfaces = os.networkInterfaces();
+                const result = [];
+                for (const name of Object.keys(interfaces)) {
+                    for (const iface of interfaces[name]) {
+                        if ('IPv4' === iface.family && !iface.internal) {
+                            result.push({ name: name, address: iface.address });
+                        }
+                    }
+                }
+                if (obj.callback) this.sendTo(obj.from, obj.command, { result: result }, obj.callback);
             }
         }
     }
