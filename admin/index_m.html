@@ -23,23 +23,37 @@
             });
             onChange(false);
 
-            // BUTTON: Get Auth URL
-            $('#btn_get_url').on('click', function() {
+            // LOGIC: Generate Link on Button Click (Client-Side)
+            $('#btn_generate_link').on('click', function() {
                 var json = $('#jsonCredentials').val();
                 if(!json) {
                     alert(_('Please paste credentials.json first'));
                     return;
                 }
+                
                 try {
+                    // 1. Parse the JSON locally
                     var creds = JSON.parse(json);
                     var keys = creds.installed || creds.web;
                     
-                    sendTo(null, 'getAuthUrl', { client_id: keys.client_id }, function(res) {
-                        if(res.url) {
-                            window.open(res.url, '_blank');
-                            $('#auth_step_2').show();
-                        }
-                    });
+                    if (!keys || !keys.client_id) {
+                        alert(_('Error') + ': Invalid JSON. Could not find client_id inside "installed" or "web" property.');
+                        return;
+                    }
+
+                    // 2. Construct the URL statically
+                    var scope = encodeURIComponent('https://www.googleapis.com/auth/assistant-sdk-prototype');
+                    var redirect = encodeURIComponent('urn:ietf:wg:oauth:2.0:oob');
+                    var url = 'https://accounts.google.com/o/oauth2/v2/auth?access_type=offline&scope=' + scope + '&response_type=code&client_id=' + keys.client_id + '&redirect_uri=' + redirect;
+
+                    // 3. Update the link href and show it
+                    $('#auth_link').attr('href', url);
+                    $('#auth_link_container').show();
+                    $('#auth_step_2').show();
+                    
+                    // Optional: Try to open it anyway, but relying on the link is safer
+                    // window.open(url, '_blank'); 
+
                 } catch(e) {
                     alert(_('Error') + ': ' + e);
                 }
@@ -49,22 +63,30 @@
             $('#btn_exchange').on('click', function() {
                 var code = $('#authCode').val();
                 var json = $('#jsonCredentials').val();
-                var creds = JSON.parse(json);
-                var keys = creds.installed || creds.web;
+                
+                if (!json) { alert('Missing credentials'); return; }
+                if (!code) { alert('Missing code'); return; }
 
-                sendTo(null, 'exchangeCode', { 
-                    code: code,
-                    clientId: keys.client_id,
-                    clientSecret: keys.client_secret
-                }, function(res) {
-                    if(res.tokens) {
-                        $('#savedTokens').val(JSON.stringify(res.tokens));
-                        onChange();
-                        M.toast({html: _('Tokens generated and saved!')});
-                    } else {
-                        alert(_('Error') + ': ' + res.error);
-                    }
-                });
+                try {
+                    var creds = JSON.parse(json);
+                    var keys = creds.installed || creds.web;
+
+                    sendTo(null, 'exchangeCode', { 
+                        code: code,
+                        clientId: keys.client_id,
+                        clientSecret: keys.client_secret
+                    }, function(res) {
+                        if(res.tokens) {
+                            $('#savedTokens').val(JSON.stringify(res.tokens));
+                            onChange();
+                            M.toast({html: _('Tokens generated and saved!')});
+                        } else {
+                            alert(_('Error') + ': ' + (res.error || 'Unknown error'));
+                        }
+                    });
+                } catch (e) {
+                    alert('JSON Parse Error: ' + e);
+                }
             });
             
             // BUTTON: Scan
@@ -92,6 +114,19 @@
     <style>
         .section { margin-bottom: 20px; border-bottom: 1px solid #ccc; padding-bottom: 10px; }
         .step { font-weight: bold; color: #2196f3; }
+        .auth-link-box { 
+            background: #e3f2fd; 
+            padding: 15px; 
+            border-radius: 4px; 
+            border: 1px solid #2196f3; 
+            margin-top: 10px;
+            text-align: center;
+        }
+        .auth-link-box a {
+            font-size: 1.2em;
+            font-weight: bold;
+            text-decoration: underline;
+        }
     </style>
 </head>
 <body>
@@ -106,20 +141,28 @@
             <div class="col s12">
                 <h5 class="translate">Google Credentials</h5>
                 <p class="translate">Paste the content of your downloaded credentials.json (OAuth Client) here.</p>
-                <textarea id="jsonCredentials" class="value materialize-textarea" style="font-family: monospace; font-size: 0.8em;"></textarea>
+                <textarea id="jsonCredentials" class="value materialize-textarea" style="font-family: monospace; font-size: 0.8em; min-height: 100px;"></textarea>
             </div>
         </div>
 
         <div class="row">
             <div class="col s12">
                 <h5 class="translate">Authentication</h5>
-                <p><span class="step translate">Step A: Click to open Google Login</span></p>
-                <a class="waves-effect waves-light btn translate" id="btn_get_url">Get Auth URL</a>
                 
-                <div id="auth_step_2" style="margin-top: 15px;">
+                <p><span class="step translate">Step A: Click to open Google Login</span></p>
+                <a class="waves-effect waves-light btn translate" id="btn_generate_link">1. Prepare Login Link</a>
+                
+                <div id="auth_link_container" style="display:none;">
+                    <div class="auth-link-box">
+                        <span class="translate">Click this link to open Google Login:</span><br/><br/>
+                        <a href="#" target="_blank" id="auth_link">OPEN GOOGLE LOGIN PAGE</a>
+                    </div>
+                </div>
+
+                <div id="auth_step_2" style="margin-top: 25px; display:none;">
                     <p><span class="step translate">Step B: Copy the code from the browser and paste it here</span></p>
                     <input type="text" id="authCode" class="translate" placeholder="Paste 4/0A..." />
-                    <a class="waves-effect waves-light btn translate" id="btn_exchange">Generate Tokens</a>
+                    <a class="waves-effect waves-light btn green translate" id="btn_exchange">2. Generate Tokens</a>
                 </div>
             </div>
         </div>
@@ -127,7 +170,7 @@
         <div class="row">
             <div class="col s12">
                 <h5 class="translate">Token Storage (Automatic)</h5>
-                <textarea id="savedTokens" class="value materialize-textarea" readonly></textarea>
+                <textarea id="savedTokens" class="value materialize-textarea" readonly style="background: #f0f0f0;"></textarea>
             </div>
         </div>
 
