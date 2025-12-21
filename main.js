@@ -14,12 +14,11 @@ const DefaultMediaReceiver = require('castv2-client').DefaultMediaReceiver;
 const googleTTS = require('google-tts-api');
 
 class GoogleBroadcast extends utils.Adapter {
-
     constructor(options) {
         super({ ...options, name: 'googlebroadcast' });
         this.on('ready', this.onReady.bind(this));
         this.on('stateChange', this.onStateChange.bind(this));
-        this.on('message', this.onMessage.bind(this));
+        this.on('message', this.onMessage.bind(this)); // Fixed: Ensured function exists
         this.on('unload', this.onUnload.bind(this));
 
         this.assistant = null;
@@ -33,7 +32,6 @@ class GoogleBroadcast extends utils.Adapter {
         this.serverPort = 8091;
         this.localIp = '';
         this.audioBuffers = new Map();
-
         this.stereoMap = new Map();
     }
 
@@ -44,10 +42,10 @@ class GoogleBroadcast extends utils.Adapter {
         
         if (this.config.manualIp) {
             this.localIp = this.config.manualIp;
-            this.log.info(`Using manual IP: ${this.localIp}`);
+            this.log.info(`[CONFIG] Using manual IP: ${this.localIp}`);
         } else if (this.config.webServerIp) {
             this.localIp = this.config.webServerIp;
-            this.log.info(`Using WebServer IP: ${this.localIp}`);
+            this.log.info(`[CONFIG] Using WebServer IP: ${this.localIp}`);
         } else {
             this.findLocalIp();
         }
@@ -55,7 +53,7 @@ class GoogleBroadcast extends utils.Adapter {
         this.startWebServer();
 
         if (this.config.broadcastMode === 'cast') {
-            this.log.info(`Mode: Chromecast TTS. Hosting at http://${this.localIp}:${this.serverPort}`);
+            this.log.info('Mode: Chromecast TTS (Cast)');
             this.setState('info.connection', true, true);
         } else {
             await this.initGoogleAssistant();
@@ -81,12 +79,11 @@ class GoogleBroadcast extends utils.Adapter {
                 if (!this.localIp && !iface.address.startsWith('172.')) this.localIp = iface.address;
             }
         }
-        this.log.info(`Auto-detected local IP: ${this.localIp}`);
+        this.log.info(`[CONFIG] Auto-detected local IP: ${this.localIp}`);
     }
 
     startWebServer() {
         this.server = http.createServer((req, res) => {
-            this.log.debug(`HTTP Request: ${req.url}`);
             const match = req.url.match(/^\/tts\/(.+)\.mp3/);
             if (match && match[1]) {
                 const deviceId = match[1];
@@ -100,100 +97,94 @@ class GoogleBroadcast extends utils.Adapter {
             res.writeHead(404);
             res.end();
         });
-        this.server.listen(this.serverPort, () => {
-            this.log.info(`WebServer started on port ${this.serverPort}`);
-        });
+        this.server.listen(this.serverPort, () => this.log.info(`WebServer running on ${this.serverPort}`));
     }
 
     async initGoogleAssistant() {
-        const credentialsJson = this.config.jsonCredentials;
-        const tokenState = await this.getStateAsync('tokens');
-        let tokensJson = tokenState ? tokenState.val : null;
+        try {
+            const credentialsJson = this.config.jsonCredentials;
+            const tokenState = await this.getStateAsync('tokens');
+            let tokensJson = tokenState ? tokenState.val : null;
 
-        if (credentialsJson && tokensJson) {
-            fs.writeFileSync(this.credsPath, credentialsJson);
-            fs.writeFileSync(this.tokensPath, tokensJson);
-            this.assistant = new GoogleAssistant({ auth: { keyFilePath: this.credsPath, savedTokensPath: this.tokensPath } });
-            this.assistant.on('ready', () => { 
-                this.assistantReady = true; 
-                this.setState('info.connection', true, true); 
-                this.log.info('Assistant SDK ready');
-            });
-        }
+            if (credentialsJson && tokensJson) {
+                fs.writeFileSync(this.credsPath, credentialsJson);
+                fs.writeFileSync(this.tokensPath, tokensJson);
+                this.assistant = new GoogleAssistant({ auth: { keyFilePath: this.credsPath, savedTokensPath: this.tokensPath } });
+                this.assistant.on('ready', () => { 
+                    this.assistantReady = true; 
+                    this.setState('info.connection', true, true); 
+                    this.log.info('Assistant SDK ready');
+                });
+            }
+        } catch (e) { this.log.error(`Assistant Init Error: ${e.message}`); }
     }
 
     async castTTS(deviceId, deviceIp, text, lang, voice) {
-        this.log.debug(`castTTS called for ${deviceId} at ${deviceIp} with text: ${text}`);
+        this.log.debug(`[TTS] Request: ${deviceId} (${deviceIp}) -> "${text}"`);
 
         if (this.stereoMap.has(deviceId)) {
             const mapping = this.stereoMap.get(deviceId);
-            this.log.info(`REDIRECTION: Device ${deviceId} belongs to Stereo Pair ${mapping.groupName}. Using IP: ${mapping.pairIp}`);
+            this.log.info(`[STEREO] Redirecting child ${deviceId} to Pair IP: ${mapping.pairIp}`);
             deviceIp = mapping.pairIp;
         }
 
-        const finalLang = lang || this.config.language || 'en-US';
         try {
             let buffer;
             if (this.config.ttsEngine === 'google_cloud') {
                 const apiUrl = `https://texttospeech.googleapis.com/v1/text:synthesize?key=${this.config.googleApiKey}`;
                 const response = await axios.post(apiUrl, {
                     input: { text: text },
-                    voice: { languageCode: finalLang, name: (voice && voice.length > 2) ? voice : undefined },
-                    audioConfig: { audioEncoding: 'MP3', speakingRate: this.config.ttsSpeed || 1 }
+                    voice: { languageCode: lang || 'de-DE', name: voice },
+                    audioConfig: { audioEncoding: 'MP3', speakingRate: 1 }
                 });
                 buffer = Buffer.from(response.data.audioContent, 'base64');
             } else {
-                const ttsUrl = googleTTS.getAudioUrl(text, { lang: finalLang, host: 'https://translate.google.com' });
+                const ttsUrl = googleTTS.getAudioUrl(text, { lang: lang || 'de-DE', host: 'https://translate.google.com' });
                 const response = await axios.get(ttsUrl, { responseType: 'arraybuffer' });
                 buffer = response.data;
             }
 
             this.audioBuffers.set(deviceId, buffer);
             const localUrl = `http://${this.localIp}:${this.serverPort}/tts/${deviceId}.mp3?t=${Date.now()}`;
-            this.log.debug(`TTS generated. Local URL: ${localUrl}`);
 
             const client = new Client();
-            client.on('error', (err) => this.log.error(`Client Error for ${deviceIp}: ${err.message}`));
-
-            this.log.debug(`Connecting to device ${deviceIp}...`);
             client.connect(deviceIp, () => {
-                this.log.debug(`Connected to ${deviceIp}. Starting heartbeat and launching app...`);
+                this.log.debug(`[CAST] Connected to ${deviceIp}. Starting heartbeat.`);
                 client.heartbeat.start();
-                
                 client.launch(DefaultMediaReceiver, (err, player) => {
                     if (err) { 
-                        this.log.error(`Launch failed for ${deviceIp}: ${err.message}`);
+                        this.log.error(`[CAST] Launch Error: ${err.message}`);
+                        this.updateLastError(deviceId, `Launch: ${err.message}`);
                         client.close(); 
                         return; 
                     }
-                    this.log.debug(`App launched. Waiting 500ms for chime...`);
                     setTimeout(() => {
-                        this.log.debug(`Loading media: ${localUrl}`);
+                        this.log.debug(`[CAST] Loading URL: ${localUrl}`);
                         player.load({ contentId: localUrl, contentType: 'audio/mpeg', streamType: 'BUFFERED' }, { autoplay: true }, (err) => {
-                            if (err) this.log.error(`Player load error: ${err.message}`);
+                            if (err) this.log.error(`[CAST] Load Error: ${err.message}`);
                         });
-                    }, 500);
-
-                    player.on('status', (s) => { 
-                        if (s && s.playerState === 'IDLE') {
-                            this.log.debug(`Player finished on ${deviceIp}. Closing.`);
-                            client.close();
-                        }
-                    });
+                    }, 600);
+                    player.on('status', (s) => { if (s && s.playerState === 'IDLE') client.close(); });
                 });
             });
-            setTimeout(() => this.audioBuffers.delete(deviceId), 60000);
-        } catch (e) { this.log.error('Cast Error: ' + e.message); }
+        } catch (e) { 
+            this.log.error(`[TTS] Global Error: ${e.message}`);
+            this.updateLastError(deviceId, e.message);
+        }
+    }
+
+    async updateLastError(deviceId, msg) {
+        await this.setObjectNotExistsAsync(`info.last_error`, { type: 'state', common: { name: 'Last Error', type: 'string', role: 'text', read: true, write: false } });
+        this.setState(`info.last_error`, `${deviceId}: ${msg}`, true);
     }
 
     initMdns() {
-        this.log.info('Initializing mDNS listener...');
         this.mdns = mDNS();
         this.mdns.on('response', (res) => this.processMdnsResponse(res));
     }
     
-    async scanNetwork() {
-        this.log.info('Scanning network for Cast devices...');
+    scanNetwork() {
+        this.log.debug('[mDNS] Sending discovery query...');
         if (this.mdns) this.mdns.query({ questions: [{ name: '_googlecast._tcp.local', type: 'PTR' }] });
     }
 
@@ -214,79 +205,61 @@ class GoogleBroadcast extends utils.Adapter {
         }
 
         const srv = records.find(r => r.type === 'SRV' && r.name === instanceName);
-        if (!srv || !friendlyName) return;
-        
-        const aRecord = records.find(r => r.type === 'A' && r.name.toLowerCase().replace(/\.$/, '') === srv.data.target.toLowerCase().replace(/\.$/, ''));
+        const aRecord = records.find(r => r.type === 'A' && r.name.toLowerCase().replace(/\.$/, '') === (srv ? srv.data.target.toLowerCase().replace(/\.$/, '') : ''));
         const ip = aRecord ? aRecord.data : null;
-        if (!ip) return;
 
-        this.log.debug(`mDNS Found: ${friendlyName} (${model}) at ${ip}`);
+        if (!friendlyName || !ip) return;
 
         const cleanId = friendlyName.replace(/[^a-zA-Z0-9_-]/g, '_');
-        // Extended detection for Stereo Pairs
-        const isStereoPair = (friendlyName.toLowerCase().includes('paar') || friendlyName.toLowerCase().includes('pair') || model === 'Google Home Stereo');
+        const isStereoPair = (friendlyName.toLowerCase().includes('paar') || friendlyName.toLowerCase().includes('pair'));
         const folder = (model === 'Google Cast Group' || isStereoPair) ? 'groups' : 'devices';
 
+        this.log.debug(`[mDNS] Found ${friendlyName} at ${ip} (${model})`);
+
         if (isStereoPair) {
-            this.log.info(`STEREO PAIR DETECTED: ${friendlyName} -> IP: ${ip}`);
-            // Extract potential child name (e.g., "Living Room" from "Living Room-Paar")
             const childBase = cleanId.split('_Paar')[0].split('_Pair')[0];
             this.stereoMap.set(childBase, { pairIp: ip, groupName: friendlyName });
         }
 
-        await this.setObjectNotExistsAsync(`${folder}.${cleanId}`, { 
-            type: 'device', 
-            common: { name: friendlyName }, 
-            native: { ip: ip, port: srv.data.port, model: model } 
-        });
+        await this.setObjectNotExistsAsync(`${folder}.${cleanId}`, { type: 'device', common: { name: friendlyName }, native: { ip: ip, model: model } });
+        
+        // Add Availability State
+        await this.setObjectNotExistsAsync(`${folder}.${cleanId}.not-available`, { type: 'state', common: { name: 'Not Available', type: 'boolean', role: 'indicator.maintenance', read: true, write: false, def: false } });
+        this.setState(`${folder}.${cleanId}.not-available`, false, true);
 
-        await this.setObjectNotExistsAsync(`${folder}.${cleanId}.not-available`, {
-            type: 'state', common: { name: 'Not Available', type: 'boolean', role: 'indicator.maintenance', read: true, write: false, def: false }
-        });
-        await this.setStateAsync(`${folder}.${cleanId}.not-available`, false, true);
-
+        // Flag child speakers
         if (folder === 'devices' && this.stereoMap.has(cleanId)) {
-            const map = this.stereoMap.get(cleanId);
-            this.log.debug(`Flagging ${cleanId} as member of ${map.groupName}`);
-            await this.extendObjectAsync(`${folder}.${cleanId}`, { 
-                native: { StereoSpeakerGroup: map.groupName } 
-            });
+            await this.extendObjectAsync(`${folder}.${cleanId}`, { native: { StereoSpeakerGroup: this.stereoMap.get(cleanId).groupName } });
         }
 
-        await this.setObjectNotExistsAsync(`${folder}.${cleanId}.broadcast`, {
-            type: 'state', common: { name: 'Broadcast', type: 'string', role: 'text', read: true, write: true }
-        });
+        await this.setObjectNotExistsAsync(`${folder}.${cleanId}.broadcast`, { type: 'state', common: { name: 'Broadcast', type: 'string', role: 'text', read: true, write: true } });
     }
 
     async onStateChange(id, state) {
         if (state && !state.ack && state.val) {
-            this.log.debug(`State Change: ${id} = ${state.val}`);
             if (id.endsWith('broadcast_all')) {
                 const devices = await this.getDevicesAsync();
                 for (const dev of devices) {
-                    if (dev.native && dev.native.ip) {
-                        const dId = dev._id.split('.').pop();
-                        this.castTTS(dId, dev.native.ip, state.val);
-                    }
+                    if (dev.native && dev.native.ip) this.castTTS(dev._id.split('.').pop(), dev.native.ip, state.val);
                 }
             } else if (id.includes('.broadcast')) {
                 const parts = id.split('.');
                 const deviceId = parts[parts.length - 2];
                 const folder = parts[parts.length - 3];
-                
                 const deviceObj = await this.getObjectAsync(`${this.namespace}.${folder}.${deviceId}`);
                 if (deviceObj && deviceObj.native && deviceObj.native.ip) {
                     this.castTTS(deviceId, deviceObj.native.ip, state.val);
-                } else {
-                    this.log.warn(`Object not found or IP missing for ${deviceId}`);
                 }
             }
             this.setState(id, null, true);
         }
     }
 
+    onMessage(obj) { 
+        if (obj && obj.command === 'scan') this.scanNetwork(); 
+    }
+
     onUnload(callback) {
-        this.log.info('Adapter shutting down...');
         if (this.server) this.server.close();
         if (this.mdns) this.mdns.destroy();
         callback();
