@@ -186,13 +186,19 @@ class GoogleBroadcast extends utils.Adapter {
     }
 
     async onMessage(obj) {
-        if (typeof obj === 'object' && obj.message) {
-            if (obj.command === 'scan') {
-                this.scanNetwork();
-                if (obj.callback) this.sendTo(obj.from, obj.command, { result: 'OK' }, obj.callback);
-            }
-            // --- RESTORED: Handle Interface Request ---
-            if (obj.command === 'getInterfaces') {
+        if (!obj) return;
+
+        // Log incoming message for debugging
+        this.log.debug(`onMessage received: ${JSON.stringify(obj)}`);
+
+        if (obj.command === 'scan') {
+            this.scanNetwork();
+            if (obj.callback) this.sendTo(obj.from, obj.command, { result: 'OK' }, obj.callback);
+        }
+        
+        // --- Handle Interface Request ---
+        if (obj.command === 'getInterfaces') {
+            try {
                 const interfaces = os.networkInterfaces();
                 const result = [];
                 for (const name of Object.keys(interfaces)) {
@@ -202,7 +208,10 @@ class GoogleBroadcast extends utils.Adapter {
                         }
                     }
                 }
+                this.log.debug(`Sending interfaces to ${obj.from}: ${JSON.stringify(result)}`);
                 if (obj.callback) this.sendTo(obj.from, obj.command, { result: result }, obj.callback);
+            } catch (e) {
+                this.log.error('Error in getInterfaces: ' + e.message);
             }
         }
     }
@@ -344,7 +353,6 @@ class GoogleBroadcast extends utils.Adapter {
     }
 
     async processMdnsResponse(response) {
-        // ... (Existing mDNS Logic) ...
         const records = [...response.answers, ...response.additionals];
         const ptr = records.find(r => r.type === 'PTR' && r.name === '_googlecast._tcp.local');
         if (!ptr) return;

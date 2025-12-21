@@ -13,6 +13,7 @@
         var interfacesList = [];
 
         function load(settings, onChange) {
+            console.log('GoogleBroadcast: Settings loaded', settings);
             if (!settings) return;
             
             $('.value').each(function () {
@@ -28,18 +29,31 @@
                 }
             });
 
+            var target = adapter + '.' + instance;
+            console.log('GoogleBroadcast: Requesting interfaces from instance: ' + target);
+
             // 1. Try to get interfaces from running adapter
-            sendTo(adapter + '.' + instance, 'getInterfaces', {}, function (response) {
+            sendTo(target, 'getInterfaces', {}, function (response) {
+                console.log('GoogleBroadcast: sendTo response received', response);
                 if (response && response.result) {
                     mergeInterfaces(response.result, settings.webServerIp);
+                } else {
+                    console.log('GoogleBroadcast: sendTo response empty or invalid');
                 }
             });
 
             // 2. Also try to get interfaces from Host Object (Offline backup)
-            socket.emit('getObject', 'system.adapter.' + adapter + '.' + instance, function (err, obj) {
+            console.log('GoogleBroadcast: Attempting offline fallback (host object)');
+            socket.emit('getObject', 'system.adapter.' + target, function (err, obj) {
+                if (err) console.error('GoogleBroadcast: Failed to get adapter object', err);
+                
                 if (!err && obj && obj.common && obj.common.host) {
+                    console.log('GoogleBroadcast: Found host ID: ' + obj.common.host);
                     socket.emit('getObject', 'system.host.' + obj.common.host, function (err, hostObj) {
+                        if (err) console.error('GoogleBroadcast: Failed to get host object', err);
+
                         if (!err && hostObj && hostObj.native && hostObj.native.hardware && hostObj.native.hardware.networkInterfaces) {
+                             console.log('GoogleBroadcast: Found interfaces in host object');
                              var interfaces = hostObj.native.hardware.networkInterfaces;
                              var list = [];
                              for (var ifaceName in interfaces) {
@@ -50,7 +64,10 @@
                                      }
                                  });
                              }
+                             console.log('GoogleBroadcast: Parsed host interfaces', list);
                              mergeInterfaces(list, settings.webServerIp);
+                        } else {
+                            console.log('GoogleBroadcast: Host object does not contain networkInterfaces or invalid structure');
                         }
                     });
                 }
@@ -83,6 +100,9 @@
         }
 
         function mergeInterfaces(newList, savedIp) {
+            console.log('GoogleBroadcast: Merging interfaces', newList);
+            if (!newList || newList.length === 0) return;
+
             // Merge into global list preventing duplicates
             newList.forEach(function(item) {
                 if (!interfacesList.find(x => x.address === item.address)) {
