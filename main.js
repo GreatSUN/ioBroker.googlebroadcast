@@ -93,6 +93,9 @@ class GoogleBroadcast extends utils.Adapter {
 
     startWebServer() {
         this.server = http.createServer((req, res) => {
+            const remoteIp = req.socket.remoteAddress;
+            this.log.debug(`Web Server: Incoming request from ${remoteIp} for ${req.url}`);
+
             const match = req.url.match(/^\/tts\/(.+)\.mp3/);
             if (match && match[1]) {
                 const deviceId = match[1];
@@ -103,12 +106,19 @@ class GoogleBroadcast extends utils.Adapter {
                         'Content-Length': buffer.length
                     });
                     res.end(buffer);
-                    this.log.debug(`Served TTS audio for device: ${deviceId}`);
+                    this.log.debug(`Web Server: Served TTS audio for device: ${deviceId}`);
                     return;
+                } else {
+                    this.log.warn(`Web Server: Buffer not found for device ${deviceId}`);
                 }
             }
             res.writeHead(404);
             res.end();
+        });
+
+        this.server.on('clientError', (err, socket) => {
+            this.log.debug(`Web Server: Client Error: ${err.message}`);
+            socket.destroy();
         });
 
         try {
@@ -305,7 +315,7 @@ class GoogleBroadcast extends utils.Adapter {
                 });
             });
             client.on('error', (err) => {
-                if (err.message && !err.message.includes('closed')) this.log.error('Cast Error: ' + err);
+                this.log.error(`Cast Client Error for ${deviceIp}: ${err.message || err}`);
                 try { client.close(); } catch(e) {}
             });
             

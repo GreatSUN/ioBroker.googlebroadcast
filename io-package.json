@@ -1,8 +1,11 @@
 {
   "common": {
     "name": "googlebroadcast",
-    "version": "0.4.5",
+    "version": "0.4.6",
     "news": {
+      "0.4.6": {
+        "en": "Added verbose HTTP request logging for debugging firewall issues"
+      },
       "0.4.5": {
         "en": "Fixed Save button activation on IP dropdown change"
       },
