@@ -12,6 +12,7 @@ const axios = require('axios');
 const Client = require('castv2-client').Client;
 const DefaultMediaReceiver = require('castv2-client').DefaultMediaReceiver;
 const googleTTS = require('google-tts-api');
+const playDl = require('play-dl');
 
 class GoogleBroadcast extends utils.Adapter {
     constructor(options) {
@@ -81,6 +82,8 @@ class GoogleBroadcast extends utils.Adapter {
         this.subscribeStates('groups.*.broadcast');
         this.subscribeStates('devices.*.volume');
         this.subscribeStates('groups.*.volume');
+        this.subscribeStates('devices.*.youtube-url');
+        this.subscribeStates('groups.*.youtube-url');
 
         // Start Volume Polling
         const pollIntervalSec = this.config.pollInterval || 30;
@@ -191,6 +194,97 @@ class GoogleBroadcast extends utils.Adapter {
             });
         } catch (e) { 
             this.log.error(`[TTS] Global Error: ${e.message}`);
+            this.updateLastError(deviceId, e.message);
+        }
+    }
+
+    async castYouTube(deviceId, deviceIp, youtubeUrl, devicePort) {
+        this.log.debug(`[YOUTUBE] Request: ${deviceId} (${deviceIp}:${devicePort || 8009}) -> "${youtubeUrl}"`);
+
+        if (this.stereoMap.has(deviceId)) {
+            const mapping = this.stereoMap.get(deviceId);
+            this.log.info(`[STEREO] Redirecting child ${deviceId} to Pair IP: ${mapping.pairIp}`);
+            deviceIp = mapping.pairIp;
+            if (mapping.pairPort) devicePort = mapping.pairPort;
+        }
+
+        try {
+            // Validate YouTube URL
+            if (!playDl.yt_validate(youtubeUrl)) {
+                this.log.error(`[YOUTUBE] Invalid YouTube URL: ${youtubeUrl}`);
+                this.updateLastError(deviceId, `Invalid YouTube URL: ${youtubeUrl}`);
+                return;
+            }
+
+            // Get video info for metadata
+            const videoInfo = await playDl.video_info(youtubeUrl);
+            const title = videoInfo.video_details.title || 'YouTube Stream';
+            const artist = videoInfo.video_details.channel?.name || 'YouTube';
+            
+            this.log.debug(`[YOUTUBE] Video: "${title}" by ${artist}`);
+
+            // Get audio stream URL (format ending with *.googlevideo.com)
+            const stream = await playDl.stream(youtubeUrl, { quality: 2 }); // quality 2 = highest audio quality
+            const streamUrl = stream.url;
+            
+            if (!streamUrl || !streamUrl.includes('googlevideo.com')) {
+                this.log.error(`[YOUTUBE] Failed to get valid stream URL`);
+                this.updateLastError(deviceId, 'Failed to get valid stream URL from YouTube');
+                return;
+            }
+
+            this.log.debug(`[YOUTUBE] Stream URL obtained: ${streamUrl.substring(0, 100)}...`);
+
+            const client = new Client();
+            const connectOptions = { host: deviceIp, port: devicePort || 8009 };
+            
+            client.connect(connectOptions, () => {
+                this.log.debug(`[CAST] Connected to ${deviceIp}:${connectOptions.port}. Starting heartbeat.`);
+                client.heartbeat.start();
+                client.launch(DefaultMediaReceiver, (err, player) => {
+                    if (err) {
+                        this.log.error(`[CAST] Launch Error: ${err.message}`);
+                        this.updateLastError(deviceId, `Launch: ${err.message}`);
+                        client.close();
+                        return;
+                    }
+                    setTimeout(() => {
+                        this.log.debug(`[YOUTUBE] Loading stream URL to device`);
+                        const media = {
+                            contentId: streamUrl,
+                            contentType: 'audio/mp4',
+                            streamType: 'BUFFERED',
+                            metadata: {
+                                metadataType: 3, // MusicTrackMediaMetadata
+                                title: title,
+                                artist: artist
+                            }
+                        };
+                        player.load(media, { autoplay: true }, (err) => {
+                            if (err) {
+                                this.log.error(`[YOUTUBE] Load Error: ${err.message}`);
+                                this.updateLastError(deviceId, `Load: ${err.message}`);
+                            } else {
+                                this.log.info(`[YOUTUBE] Now playing: "${title}" on ${deviceId}`);
+                            }
+                        });
+                    }, 600);
+                    player.on('status', (s) => {
+                        if (s && s.playerState === 'IDLE' && s.idleReason === 'FINISHED') {
+                            client.close();
+                        }
+                    });
+                });
+            });
+
+            client.on('error', (err) => {
+                this.log.error(`[YOUTUBE] Client Error: ${err.message}`);
+                this.updateLastError(deviceId, `Client: ${err.message}`);
+                client.close();
+            });
+
+        } catch (e) {
+            this.log.error(`[YOUTUBE] Global Error: ${e.message}`);
             this.updateLastError(deviceId, e.message);
         }
     }
@@ -306,6 +400,10 @@ class GoogleBroadcast extends utils.Adapter {
         // Add Volume State
         await this.setObjectNotExistsAsync(`${folder}.${cleanId}.volume`, { type: 'state', common: { name: 'Volume', type: 'number', role: 'level.volume', read: true, write: true, min: 0, max: 100, unit: '%' } });
         this.subscribeStates(`${folder}.${cleanId}.volume`);
+
+        // Add YouTube URL State
+        await this.setObjectNotExistsAsync(`${folder}.${cleanId}.youtube-url`, { type: 'state', common: { name: 'YouTube URL', type: 'string', role: 'media.url', read: true, write: true, desc: 'Play a YouTube video/audio URL on this device' } });
+        this.subscribeStates(`${folder}.${cleanId}.youtube-url`);
     }
 
     async setVolume(ip, port, level) {
@@ -419,6 +517,15 @@ class GoogleBroadcast extends utils.Adapter {
                     this.setVolume(targetIp, targetPort, state.val);
                 }
                 this.setState(id, state.val, true);
+            } else if (id.includes('.youtube-url')) {
+                const parts = id.split('.');
+                const deviceId = parts[parts.length - 2];
+                const folder = parts[parts.length - 3];
+                const deviceObj = await this.getObjectAsync(`${this.namespace}.${folder}.${deviceId}`);
+                if (deviceObj && deviceObj.native && deviceObj.native.ip) {
+                    this.castYouTube(deviceId, deviceObj.native.ip, state.val, deviceObj.native.port);
+                }
+                this.setState(id, null, true);
             }
         }
     }

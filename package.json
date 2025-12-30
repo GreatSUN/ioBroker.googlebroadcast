@@ -16,7 +16,8 @@
     "googleapis": "^144.0.0",
     "multicast-dns": "^7.2.5",
     "castv2-client": "^1.2.0",
-    "google-tts-api": "^2.0.2"
+    "google-tts-api": "^2.0.2",
+    "play-dl": "^1.9.7"
   },
   "keywords": [
     "ioBroker",
