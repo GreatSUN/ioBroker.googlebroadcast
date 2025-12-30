@@ -38,6 +38,7 @@ class GoogleBroadcast extends utils.Adapter {
         this.devicesByIp = new Map();
         this.groupsByNorm = new Map(); // Normalized Group Name -> Group Info
         this.devicesByNorm = new Map(); // Normalized Device Name -> Device ID
+        this.devicesByModel = new Map(); // Model Name (md=) -> Device cleanId (for reverse lookup)
     }
 
     normalizeName(name) {
@@ -453,7 +454,21 @@ class GoogleBroadcast extends utils.Adapter {
             }
         }
 
-        await this.setObjectNotExistsAsync(`${folder}.${cleanId}`, { type: 'device', common: { name: friendlyName }, native: { ip: ip, port: port, model: model } });
+        // Extract mDNS instance ID (e.g., "NestAudio5124" from "NestAudio5124._googlecast._tcp.local")
+        const mdnsInstanceId = instanceName.split('._googlecast')[0];
+        
+        await this.setObjectNotExistsAsync(`${folder}.${cleanId}`, { type: 'device', common: { name: friendlyName }, native: { ip: ip, port: port, model: model, mdnsId: mdnsInstanceId } });
+        
+        // Store mapping from mDNS instance ID to cleanId for reverse lookup
+        this.devicesByModel.set(mdnsInstanceId, { cleanId: cleanId, folder: folder });
+        
+        // Add Model Name State (stores the md= value from mDNS)
+        await this.setObjectNotExistsAsync(`${folder}.${cleanId}.model-name`, { type: 'state', common: { name: 'Model Name', type: 'string', role: 'text', read: true, write: false, desc: 'Device model name from mDNS (md= field)' } });
+        this.setState(`${folder}.${cleanId}.model-name`, model || '', true);
+        
+        // Add mDNS Instance ID State (stores the instance name from mDNS PTR record)
+        await this.setObjectNotExistsAsync(`${folder}.${cleanId}.mdns-id`, { type: 'state', common: { name: 'mDNS Instance ID', type: 'string', role: 'text', read: true, write: false, desc: 'mDNS instance identifier (e.g., NestAudio5124)' } });
+        this.setState(`${folder}.${cleanId}.mdns-id`, mdnsInstanceId, true);
         
         // Add Availability State
         await this.setObjectNotExistsAsync(`${folder}.${cleanId}.not-available`, { type: 'state', common: { name: 'Not Available', type: 'boolean', role: 'indicator.maintenance', read: true, write: false, def: false } });
@@ -516,51 +531,67 @@ class GoogleBroadcast extends utils.Adapter {
 
             for (const deviceId of uniqueIds) {
                 const obj = await this.getObjectAsync(deviceId);
-                if (obj && obj.native && obj.native.ip) {
-                    const ip = obj.native.ip;
-                    const port = obj.native.port || 8009;
-                    const relId = deviceId.split('.').slice(2).join('.');
-                    const cleanId = relId.split('.').pop();
+                
+                // Extract cleanId from the path
+                const relId = deviceId.split('.').slice(2).join('.');
+                const cleanId = relId.split('.').pop();
+                
+                // Check if this looks like an mDNS instance ID (e.g., NestAudio5124) instead of a friendly name
+                // mDNS instance IDs typically don't have spaces/underscores and follow a pattern like "DeviceType1234"
+                if (!obj || !obj.native || !obj.native.ip) {
+                    // Try to find the correct device using the devicesByModel map
+                    const modelLookup = this.devicesByModel.get(cleanId);
+                    if (modelLookup) {
+                        this.log.debug(`[POLL] Found device by mDNS ID lookup: ${cleanId} -> ${modelLookup.cleanId}`);
+                        // Skip this iteration - the correct device will be polled via its proper cleanId
+                        continue;
+                    }
+                    
+                    this.log.debug(`[POLL] Skipping unknown device: ${cleanId} (no object or IP found)`);
+                    continue;
+                }
+                
+                const ip = obj.native.ip;
+                const port = obj.native.port || 8009;
 
-                    const client = new Client();
-                    let connected = false;
-                    const timeout = setTimeout(() => {
-                        if (!connected) {
-                            client.close();
-                            this.handleDeviceUnavailable(folder, cleanId, removalTimeoutHours);
-                        }
-                    }, 5000);
-
-                    client.on('error', () => {
+                const client = new Client();
+                let connected = false;
+                const timeout = setTimeout(() => {
+                    if (!connected) {
                         client.close();
-                        if (!connected) {
-                            clearTimeout(timeout);
-                            this.handleDeviceUnavailable(folder, cleanId, removalTimeoutHours);
-                        }
-                    });
+                        this.handleDeviceUnavailable(folder, cleanId, removalTimeoutHours);
+                    }
+                }, 5000);
 
-                    try {
-                        client.connect({ host: ip, port: port }, () => {
-                             client.getStatus((err, status) => {
-                                 clearTimeout(timeout);
-                                 connected = true;
-                                 if (!err && status) {
-                                     // Device is available - reset states
-                                     this.handleDeviceAvailable(folder, cleanId);
-                                     if (status.volume) {
-                                         const vol = Math.round(status.volume.level * 100);
-                                         this.setState(`${relId}.volume`, vol, true);
-                                     }
-                                 } else {
-                                     this.handleDeviceUnavailable(folder, cleanId, removalTimeoutHours);
-                                 }
-                                 client.close();
-                             });
-                        });
-                    } catch (e) {
+                client.on('error', () => {
+                    client.close();
+                    if (!connected) {
                         clearTimeout(timeout);
                         this.handleDeviceUnavailable(folder, cleanId, removalTimeoutHours);
                     }
+                });
+
+                try {
+                    client.connect({ host: ip, port: port }, () => {
+                         client.getStatus((err, status) => {
+                             clearTimeout(timeout);
+                             connected = true;
+                             if (!err && status) {
+                                 // Device is available - reset states
+                                 this.handleDeviceAvailable(folder, cleanId);
+                                 if (status.volume) {
+                                     const vol = Math.round(status.volume.level * 100);
+                                     this.setState(`${relId}.volume`, vol, true);
+                                 }
+                             } else {
+                                 this.handleDeviceUnavailable(folder, cleanId, removalTimeoutHours);
+                             }
+                             client.close();
+                         });
+                    });
+                } catch (e) {
+                    clearTimeout(timeout);
+                    this.handleDeviceUnavailable(folder, cleanId, removalTimeoutHours);
                 }
             }
         }

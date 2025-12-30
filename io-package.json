@@ -1,8 +1,11 @@
 {
   "common": {
     "name": "googlebroadcast",
-    "version": "0.6.1",
+    "version": "0.6.2",
     "news": {
+      "0.6.2": {
+        "en": "Added model-name and mdns-id states for better device identification"
+      },
       "0.6.1": {
         "en": "Fixed device name resolution bug and added YouTube Premium OAuth support"
       },
