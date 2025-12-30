@@ -87,13 +87,27 @@
                     var creds = JSON.parse(json);
                     var keys = creds.installed || creds.web;
                     if (!keys || !keys.client_id) { alert('Invalid JSON. Missing client_id.'); return; }
-                    var scope = encodeURIComponent('https://www.googleapis.com/auth/assistant-sdk-prototype');
+                    // Combined scopes: Assistant SDK + YouTube
+                    var scopes = [
+                        'https://www.googleapis.com/auth/assistant-sdk-prototype',
+                        'https://www.googleapis.com/auth/youtube'
+                    ];
+                    var scope = encodeURIComponent(scopes.join(' '));
                     var redirect = encodeURIComponent('urn:ietf:wg:oauth:2.0:oob');
                     var url = 'https://accounts.google.com/o/oauth2/v2/auth?access_type=offline&scope=' + scope + '&response_type=code&client_id=' + keys.client_id + '&redirect_uri=' + redirect;
                     $('#auth_link').attr('href', url);
                     $('#auth_link_container').show();
                     $('#auth_step_2').show();
                 } catch(e) { alert('Error: ' + e); }
+            });
+
+            $('#btn_reauth').on('click', function() {
+                // Clear stored tokens
+                sendTo(adapter + '.' + instance, 'clearTokens', {}, function(response) {
+                    M.toast({html: 'Tokens cleared. Please generate a new auth link.'});
+                    $('#auth_link_container').hide();
+                    $('#auth_step_2').hide();
+                });
             });
             
             $('#btn_scan').on('click', function() {
@@ -268,6 +282,7 @@
                 </div>
                 <div class="col s12">
                      <a class="waves-effect waves-light btn translate" id="btn_generate_link">Get Auth Link</a>
+                     <a class="waves-effect waves-light btn red" id="btn_reauth" style="margin-left: 10px;">Re-Authenticate</a>
                      <div id="auth_link_container" style="display:none; margin-top:10px;">
                         <a href="#" target="_blank" id="auth_link" style="font-weight:bold;">OPEN GOOGLE LOGIN</a>
                      </div>

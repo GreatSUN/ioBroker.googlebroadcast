@@ -66,8 +66,12 @@ class GoogleBroadcast extends utils.Adapter {
         if (this.config.broadcastMode === 'cast') {
             this.log.info('Mode: Chromecast TTS (Cast)');
             this.setState('info.connection', true, true);
+            // Initialize play-dl for YouTube Premium support
+            await this.initPlayDl();
         } else {
             await this.initGoogleAssistant();
+            // Initialize play-dl for YouTube Premium support
+            await this.initPlayDl();
         }
 
         this.initMdns();
@@ -163,13 +167,48 @@ class GoogleBroadcast extends utils.Adapter {
                 fs.writeFileSync(this.credsPath, credentialsJson);
                 fs.writeFileSync(this.tokensPath, tokensJson);
                 this.assistant = new GoogleAssistant({ auth: { keyFilePath: this.credsPath, savedTokensPath: this.tokensPath } });
-                this.assistant.on('ready', () => { 
-                    this.assistantReady = true; 
-                    this.setState('info.connection', true, true); 
+                this.assistant.on('ready', () => {
+                    this.assistantReady = true;
+                    this.setState('info.connection', true, true);
                     this.log.info('Assistant SDK ready');
                 });
             }
         } catch (e) { this.log.error(`Assistant Init Error: ${e.message}`); }
+    }
+
+    async initPlayDl() {
+        try {
+            // Check if we have YouTube OAuth tokens stored
+            const ytTokenState = await this.getStateAsync('youtube_tokens');
+            const ytTokens = ytTokenState ? ytTokenState.val : null;
+            
+            if (ytTokens) {
+                // Parse and set the tokens for play-dl
+                const tokens = JSON.parse(ytTokens);
+                await playDl.setToken({
+                    youtube: {
+                        cookie: tokens.cookie || ''
+                    }
+                });
+                this.log.info('[YOUTUBE] play-dl initialized with stored tokens');
+            } else {
+                this.log.info('[YOUTUBE] No YouTube tokens found. YouTube Premium features may require authentication.');
+                // Create the youtube_tokens state if it doesn't exist
+                await this.setObjectNotExistsAsync('youtube_tokens', {
+                    type: 'state',
+                    common: {
+                        name: 'YouTube OAuth Tokens',
+                        type: 'string',
+                        role: 'json',
+                        read: true,
+                        write: true,
+                        desc: 'Stored YouTube OAuth tokens for play-dl'
+                    }
+                });
+            }
+        } catch (e) {
+            this.log.warn(`[YOUTUBE] play-dl init: ${e.message}`);
+        }
     }
 
     async castTTS(deviceId, deviceIp, text, lang, voice, devicePort) {
@@ -528,13 +567,43 @@ class GoogleBroadcast extends utils.Adapter {
     }
 
     async handleDeviceAvailable(folder, cleanId) {
+        const relId = `${folder}.${cleanId}`;
+        
+        // Check if device object exists before setting states
+        const deviceObj = await this.getObjectAsync(relId);
+        if (!deviceObj) {
+            this.log.debug(`[POLL] Device ${cleanId} object not found, skipping availability update`);
+            return;
+        }
+        
         // Device is responding - reset not-available and no-response-ts
-        this.setState(`${folder}.${cleanId}.not-available`, false, true);
-        this.setState(`${folder}.${cleanId}.no-response-ts`, null, true);
+        this.setState(`${relId}.not-available`, false, true);
+        this.setState(`${relId}.no-response-ts`, null, true);
     }
 
     async handleDeviceUnavailable(folder, cleanId, removalTimeoutHours) {
         const relId = `${folder}.${cleanId}`;
+        
+        // Check if device object exists before setting states
+        const deviceObj = await this.getObjectAsync(relId);
+        if (!deviceObj) {
+            this.log.debug(`[POLL] Device ${cleanId} object not found, skipping unavailability update`);
+            return;
+        }
+        
+        // Ensure no-response-ts state exists before trying to use it
+        await this.setObjectNotExistsAsync(`${relId}.no-response-ts`, {
+            type: 'state',
+            common: {
+                name: 'No Response Since',
+                type: 'number',
+                role: 'date',
+                read: true,
+                write: false,
+                def: null,
+                desc: 'Timestamp when device stopped responding (null if available)'
+            }
+        });
         
         // Set not-available to true
         this.setState(`${relId}.not-available`, true, true);
@@ -642,8 +711,18 @@ class GoogleBroadcast extends utils.Adapter {
         }
     }
 
-    onMessage(obj) { 
-        if (obj && obj.command === 'scan') this.scanNetwork(); 
+    onMessage(obj) {
+        if (obj && obj.command === 'scan') {
+            this.scanNetwork();
+        } else if (obj && obj.command === 'clearTokens') {
+            // Clear stored tokens for re-authentication
+            this.setState('tokens', '', true);
+            this.setState('youtube_tokens', '', true);
+            this.log.info('[AUTH] Cleared stored tokens for re-authentication');
+            if (obj.callback) {
+                this.sendTo(obj.from, obj.command, { success: true }, obj.callback);
+            }
+        }
     }
 
     onUnload(callback) {
