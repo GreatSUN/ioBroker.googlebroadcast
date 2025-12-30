@@ -85,6 +85,9 @@ class GoogleBroadcast extends utils.Adapter {
         this.subscribeStates('devices.*.youtube-url');
         this.subscribeStates('groups.*.youtube-url');
 
+        // Ensure youtube-url state exists for all existing devices
+        await this.ensureYouTubeUrlStates();
+
         // Start Volume Polling
         const pollIntervalSec = this.config.pollInterval || 30;
         this.log.info(`[CONFIG] Volume Poll Interval: ${pollIntervalSec}s`);
@@ -92,6 +95,33 @@ class GoogleBroadcast extends utils.Adapter {
         if (pollIntervalSec > 0) {
             setInterval(() => this.pollVolume(), pollIntervalSec * 1000);
         }
+    }
+
+    async ensureYouTubeUrlStates() {
+        // Ensure youtube-url state exists for all existing devices and groups
+        const folders = ['devices', 'groups'];
+        for (const folder of folders) {
+            const devices = await this.getDevicesAsync();
+            for (const dev of devices) {
+                const devId = dev._id;
+                if (!devId.includes(`.${folder}.`)) continue;
+                
+                const cleanId = devId.split('.').pop();
+                await this.setObjectNotExistsAsync(`${folder}.${cleanId}.youtube-url`, {
+                    type: 'state',
+                    common: {
+                        name: 'YouTube URL',
+                        type: 'string',
+                        role: 'media.url',
+                        read: true,
+                        write: true,
+                        desc: 'Play a YouTube video/audio URL on this device'
+                    }
+                });
+                this.subscribeStates(`${folder}.${cleanId}.youtube-url`);
+            }
+        }
+        this.log.info('[INIT] Ensured youtube-url states exist for all devices');
     }
 
     findLocalIp() {
@@ -390,6 +420,11 @@ class GoogleBroadcast extends utils.Adapter {
         await this.setObjectNotExistsAsync(`${folder}.${cleanId}.not-available`, { type: 'state', common: { name: 'Not Available', type: 'boolean', role: 'indicator.maintenance', read: true, write: false, def: false } });
         this.setState(`${folder}.${cleanId}.not-available`, false, true);
 
+        // Add No Response Timestamp State (for tracking when device stopped responding)
+        await this.setObjectNotExistsAsync(`${folder}.${cleanId}.no-response-ts`, { type: 'state', common: { name: 'No Response Since', type: 'number', role: 'date', read: true, write: false, def: null, desc: 'Timestamp when device stopped responding (null if available)' } });
+        // Reset timestamp when device is discovered via mDNS
+        this.setState(`${folder}.${cleanId}.no-response-ts`, null, true);
+
         // Flag child speakers
         if (folder === 'devices' && this.stereoMap.has(cleanId)) {
             await this.extendObjectAsync(`${folder}.${cleanId}`, { native: { StereoSpeakerGroup: this.stereoMap.get(cleanId).groupName } });
@@ -428,6 +463,8 @@ class GoogleBroadcast extends utils.Adapter {
 
     async pollVolume() {
         const folders = ['devices', 'groups'];
+        const removalTimeoutHours = this.config.deviceRemovalTimeout || 24; // Hours before device removal (0 = disable)
+
         for (const folder of folders) {
             const states = await this.getStatesAsync(`${folder}.*.volume`);
             if (!states) continue;
@@ -444,16 +481,23 @@ class GoogleBroadcast extends utils.Adapter {
                     const ip = obj.native.ip;
                     const port = obj.native.port || 8009;
                     const relId = deviceId.split('.').slice(2).join('.');
+                    const cleanId = relId.split('.').pop();
 
                     const client = new Client();
                     let connected = false;
                     const timeout = setTimeout(() => {
-                        if (!connected) { client.close(); this.setState(`${relId}.not-available`, true, true); }
+                        if (!connected) {
+                            client.close();
+                            this.handleDeviceUnavailable(folder, cleanId, removalTimeoutHours);
+                        }
                     }, 5000);
 
                     client.on('error', () => {
                         client.close();
-                        if (!connected) { clearTimeout(timeout); this.setState(`${relId}.not-available`, true, true); }
+                        if (!connected) {
+                            clearTimeout(timeout);
+                            this.handleDeviceUnavailable(folder, cleanId, removalTimeoutHours);
+                        }
                     });
 
                     try {
@@ -462,20 +506,88 @@ class GoogleBroadcast extends utils.Adapter {
                                  clearTimeout(timeout);
                                  connected = true;
                                  if (!err && status) {
-                                     this.setState(`${relId}.not-available`, false, true);
+                                     // Device is available - reset states
+                                     this.handleDeviceAvailable(folder, cleanId);
                                      if (status.volume) {
                                          const vol = Math.round(status.volume.level * 100);
-                                         this.setState(`${relId}.volume`, vol, true); 
+                                         this.setState(`${relId}.volume`, vol, true);
                                      }
                                  } else {
-                                     this.setState(`${relId}.not-available`, true, true);
+                                     this.handleDeviceUnavailable(folder, cleanId, removalTimeoutHours);
                                  }
                                  client.close();
                              });
                         });
-                    } catch (e) { clearTimeout(timeout); this.setState(`${relId}.not-available`, true, true); }
+                    } catch (e) {
+                        clearTimeout(timeout);
+                        this.handleDeviceUnavailable(folder, cleanId, removalTimeoutHours);
+                    }
                 }
             }
+        }
+    }
+
+    async handleDeviceAvailable(folder, cleanId) {
+        // Device is responding - reset not-available and no-response-ts
+        this.setState(`${folder}.${cleanId}.not-available`, false, true);
+        this.setState(`${folder}.${cleanId}.no-response-ts`, null, true);
+    }
+
+    async handleDeviceUnavailable(folder, cleanId, removalTimeoutHours) {
+        const relId = `${folder}.${cleanId}`;
+        
+        // Set not-available to true
+        this.setState(`${relId}.not-available`, true, true);
+        
+        // Get current no-response-ts state
+        const tsState = await this.getStateAsync(`${relId}.no-response-ts`);
+        let noResponseTs = tsState ? tsState.val : null;
+        
+        // If this is the first time device is unavailable, set the timestamp
+        if (noResponseTs === null || noResponseTs === undefined) {
+            noResponseTs = Date.now();
+            this.setState(`${relId}.no-response-ts`, noResponseTs, true);
+            this.log.debug(`[POLL] Device ${cleanId} became unavailable, recording timestamp`);
+        }
+        
+        // Check if device should be removed (timeout reached)
+        if (removalTimeoutHours > 0) {
+            const elapsedMs = Date.now() - noResponseTs;
+            const elapsedHours = elapsedMs / (1000 * 60 * 60);
+            
+            this.log.debug(`[POLL] Device ${cleanId} unavailable for ${elapsedHours.toFixed(2)} hours (threshold: ${removalTimeoutHours}h)`);
+            
+            if (elapsedHours >= removalTimeoutHours) {
+                this.log.warn(`[CLEANUP] Removing device ${cleanId} after ${removalTimeoutHours} hours without response`);
+                await this.deleteDeviceAsync(relId);
+                
+                // Clean up internal maps
+                for (const [ip, id] of this.devicesByIp.entries()) {
+                    if (id === cleanId) {
+                        this.devicesByIp.delete(ip);
+                        break;
+                    }
+                }
+                this.stereoMap.delete(cleanId);
+            }
+        }
+    }
+
+    async deleteDeviceAsync(devicePath) {
+        try {
+            // Get all states under this device
+            const states = await this.getStatesAsync(`${devicePath}.*`);
+            if (states) {
+                for (const stateId of Object.keys(states)) {
+                    const relId = stateId.replace(`${this.namespace}.`, '');
+                    await this.delObjectAsync(relId);
+                }
+            }
+            // Delete the device object itself
+            await this.delObjectAsync(devicePath);
+            this.log.info(`[CLEANUP] Successfully deleted ${devicePath}`);
+        } catch (e) {
+            this.log.error(`[CLEANUP] Error deleting ${devicePath}: ${e.message}`);
         }
     }
 
