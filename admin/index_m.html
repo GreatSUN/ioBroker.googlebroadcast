@@ -153,7 +153,6 @@
             
             function updateYouTubeAuthUrl() {
                 var json = $('#jsonCredentials').val();
-                var mode = $('input[name="youtubeAuthMode"]:checked').val();
                 var $btn = $('#btn_youtube_auth');
                 
                 if (!json) {
@@ -172,19 +171,11 @@
                     // YouTube scope
                     var scope = encodeURIComponent('https://www.googleapis.com/auth/youtube');
                     
-                    // Redirect URI based on mode
-                    var redirectUri;
-                    if (mode === 'automatic') {
-                        // Use adapter's webserver IP and port for OAuth callback
-                        // The adapter webserver handles /oauth/youtube endpoint
-                        var ip = adapterWebServerIp || 'localhost';
-                        var port = adapterWebServerPort || 8091;
-                        redirectUri = encodeURIComponent('http://' + ip + ':' + port + '/oauth/youtube');
-                        console.log('GoogleBroadcast: YouTube OAuth redirect URI:', 'http://' + ip + ':' + port + '/oauth/youtube');
-                    } else {
-                        // Safe mode - use OOB
-                        redirectUri = encodeURIComponent('urn:ietf:wg:oauth:2.0:oob');
-                    }
+                    // Always use adapter's webserver for OAuth callback (OOB is deprecated by Google)
+                    var ip = adapterWebServerIp || 'localhost';
+                    var port = adapterWebServerPort || 8091;
+                    var redirectUri = encodeURIComponent('http://' + ip + ':' + port + '/oauth/youtube');
+                    console.log('GoogleBroadcast: YouTube OAuth redirect URI:', 'http://' + ip + ':' + port + '/oauth/youtube');
                     
                     var url = 'https://accounts.google.com/o/oauth2/v2/auth' +
                         '?access_type=offline' +
@@ -200,18 +191,6 @@
                 }
             }
             
-            // Set up radio button change handler
-            $('input[name="youtubeAuthMode"]').on('change', function() {
-                var mode = $(this).val();
-                if (mode === 'safe') {
-                    $('#youtube_safe_mode_input').addClass('visible');
-                } else {
-                    $('#youtube_safe_mode_input').removeClass('visible');
-                }
-                // Update URL when mode changes
-                updateYouTubeAuthUrl();
-            });
-            
             // Update URL when credentials change
             $('#jsonCredentials').on('change keyup', function() {
                 updateYouTubeAuthUrl();
@@ -220,9 +199,8 @@
             // Initial URL generation
             updateYouTubeAuthUrl();
             
-            // Click handler for the button - show instructions for safe mode
+            // Click handler for the authorize button
             $('#btn_youtube_auth').on('click', function(e) {
-                var mode = $('input[name="youtubeAuthMode"]:checked').val();
                 var href = $(this).attr('href');
                 
                 // Check if button is disabled or no URL
@@ -232,17 +210,14 @@
                     return false;
                 }
                 
-                if (mode === 'safe') {
-                    // Show the code input field
-                    $('#youtube_safe_mode_input').addClass('visible');
-                    M.toast({html: 'Copy the code from Google and paste it below'});
-                } else {
-                    // For automatic mode, poll for token status after some time
-                    setTimeout(function() {
-                        checkYouTubeTokenStatus();
-                    }, 5000);
-                }
+                M.toast({html: 'Opening Google authorization. Complete it and return here to refresh status.'});
                 // Let the link open naturally (don't prevent default)
+            });
+            
+            // Refresh Status button handler
+            $('#btn_youtube_refresh').on('click', function() {
+                checkYouTubeTokenStatus();
+                M.toast({html: 'Checking YouTube token status...'});
             });
             
             // Clear YouTube tokens button
@@ -509,36 +484,23 @@
                     </p>
                 </div>
                 
-                <!-- Authentication Mode Selection -->
+                <!-- Authentication Info -->
                 <div class="col s12">
-                    <p><strong>Select authentication method:</strong></p>
-                    <p>
-                        <label>
-                            <input type="radio" name="youtubeAuthMode" value="automatic" />
-                            <span><strong>Automatic</strong> - Opens popup, code captured automatically (only works from localhost)</span>
-                        </label>
-                    </p>
-                    <p>
-                        <label>
-                            <input type="radio" name="youtubeAuthMode" value="safe" checked />
-                            <span><strong>Safe Mode (Recommended)</strong> - Opens new tab, copy/paste code. Works from any location.</span>
-                        </label>
-                    </p>
+                    <p><strong>Instructions:</strong></p>
+                    <ol>
+                        <li>Click "Authorize YouTube Premium" button below</li>
+                        <li>Complete the Google authorization in the new tab</li>
+                        <li>You will be redirected to the adapter's webserver which will capture the tokens automatically</li>
+                        <li>Return here and click "Refresh Status" to verify connection</li>
+                    </ol>
+                    <p><em>Note: This requires the adapter to be running and accessible at http://[your-ip]:8091</em></p>
                 </div>
                 
                 <!-- Authorize Button -->
                 <div class="col s12" style="margin-top: 10px;">
                     <a class="waves-effect waves-light btn red disabled" id="btn_youtube_auth" href="#" target="_blank">Authorize YouTube Premium</a>
+                    <a class="waves-effect waves-light btn blue" id="btn_youtube_refresh" style="margin-left: 10px;">Refresh Status</a>
                     <a class="waves-effect waves-light btn grey" id="btn_youtube_clear" style="margin-left: 10px;">Clear Tokens</a>
-                </div>
-                
-                <!-- Safe Mode: Code Input (saved with standard Save button) - visible by default since Safe Mode is default -->
-                <div id="youtube_safe_mode_input" class="safe-mode-input visible col s12" style="margin-top: 15px;">
-                    <div class="input-field">
-                        <input type="text" id="youtubeAuthCode" class="value" />
-                        <label for="youtubeAuthCode">Paste authorization code here (will be processed on Save)</label>
-                    </div>
-                    <p><small>After pasting the code, click Save or Save &amp; Close. The adapter will exchange the code for tokens on restart.</small></p>
                 </div>
             </div>
         </div>
