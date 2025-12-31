@@ -53,9 +53,10 @@
                     adapterWebServerPort = response.webServerPort;
                     console.log('GoogleBroadcast: Adapter webserver port:', adapterWebServerPort);
                 }
-                // Update YouTube auth URL with new info
-                if (typeof updateYouTubeAuthUrl === 'function') {
-                    updateYouTubeAuthUrl();
+                // Update YouTube auth URL with new info (use window. since it's set there)
+                if (typeof window.updateYouTubeAuthUrl === 'function') {
+                    console.log('GoogleBroadcast: Updating YouTube auth URL with IP:', adapterWebServerIp);
+                    window.updateYouTubeAuthUrl();
                 }
             });
 
@@ -237,33 +238,6 @@
                     }, 5000);
                 }
                 // Let the link open naturally (don't prevent default)
-            });
-            
-            // Submit code button (Safe mode)
-            $('#btn_youtube_submit_code').on('click', function() {
-                var code = $('#youtube_auth_code').val().trim();
-                if (!code) {
-                    M.toast({html: 'Please enter the authorization code'});
-                    return;
-                }
-                
-                $(this).addClass('disabled');
-                $('#youtube_auth_code').prop('disabled', true);
-                
-                sendTo(target, 'exchangeYouTubeCode', { code: code }, function(response) {
-                    $('#btn_youtube_submit_code').removeClass('disabled');
-                    $('#youtube_auth_code').prop('disabled', false);
-                    
-                    if (response && response.success) {
-                        M.toast({html: '✓ YouTube Premium connected successfully!'});
-                        $('#youtube_auth_code').val('');
-                        $('#youtube_safe_mode_input').removeClass('visible');
-                        checkYouTubeTokenStatus();
-                    } else {
-                        var error = response && response.error ? response.error : 'Unknown error';
-                        M.toast({html: '✗ Failed: ' + error});
-                    }
-                });
             });
             
             // Clear YouTube tokens button
@@ -553,13 +527,13 @@
                     <a class="waves-effect waves-light btn grey" id="btn_youtube_clear" style="margin-left: 10px;">Clear Tokens</a>
                 </div>
                 
-                <!-- Safe Mode: Code Input -->
+                <!-- Safe Mode: Code Input (saved with standard Save button) -->
                 <div id="youtube_safe_mode_input" class="safe-mode-input col s12" style="margin-top: 15px;">
                     <div class="input-field">
-                        <input type="text" id="youtube_auth_code" />
-                        <label for="youtube_auth_code">Paste authorization code here</label>
+                        <input type="text" id="youtubeAuthCode" class="value" />
+                        <label for="youtubeAuthCode">Paste authorization code here (will be processed on Save)</label>
                     </div>
-                    <a class="waves-effect waves-light btn green" id="btn_youtube_submit_code">Submit Code</a>
+                    <p><small>After pasting the code, click Save or Save &amp; Close. The adapter will exchange the code for tokens on restart.</small></p>
                 </div>
             </div>
         </div>

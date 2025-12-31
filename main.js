@@ -71,9 +71,17 @@ class GoogleBroadcast extends utils.Adapter {
         if (this.config.broadcastMode === 'cast') {
             this.log.info('Mode: Chromecast TTS (Cast)');
             this.setState('info.connection', true, true);
+            
+            // Process YouTube auth code if provided in config
+            await this.processYouTubeAuthCode();
+            
             await this.initPlayDl();
         } else {
             await this.initGoogleAssistant();
+            
+            // Process YouTube auth code if provided in config
+            await this.processYouTubeAuthCode();
+            
             await this.initPlayDl();
         }
 
@@ -383,6 +391,69 @@ class GoogleBroadcast extends utils.Adapter {
             this.log.info('[YOUTUBE] play-dl configured with OAuth tokens');
         } catch (e) {
             this.log.error(`[YOUTUBE] Failed to set play-dl token: ${e.message}`);
+        }
+    }
+
+    /**
+     * Process YouTube auth code from config (Safe Mode)
+     * Exchanges the code for tokens and clears the config
+     */
+    async processYouTubeAuthCode() {
+        try {
+            const authCode = this.config.youtubeAuthCode;
+            
+            if (!authCode || authCode.trim() === '') {
+                this.log.debug('[YOUTUBE-AUTH] No auth code in config');
+                return;
+            }
+            
+            this.log.info('[YOUTUBE-AUTH] Found auth code in config, exchanging for tokens...');
+            
+            // Check if we already have tokens
+            const tokenState = await this.getStateAsync('youtube_oauth_tokens');
+            if (tokenState && tokenState.val && tokenState.val !== '') {
+                try {
+                    const existingTokens = JSON.parse(tokenState.val);
+                    if (existingTokens.access_token) {
+                        this.log.info('[YOUTUBE-AUTH] Tokens already exist, skipping code exchange. Clear tokens first to re-authenticate.');
+                        // Clear the auth code from config since we already have tokens
+                        await this.clearYouTubeAuthCodeFromConfig();
+                        return;
+                    }
+                } catch (e) {
+                    // Invalid token JSON, proceed with exchange
+                }
+            }
+            
+            // Exchange the code for tokens
+            const tokens = await this.exchangeYouTubeCodeSafeMode(authCode.trim());
+            
+            if (tokens) {
+                this.log.info('[YOUTUBE-AUTH] Successfully exchanged auth code for tokens');
+                // Clear the auth code from config
+                await this.clearYouTubeAuthCodeFromConfig();
+            } else {
+                this.log.error('[YOUTUBE-AUTH] Failed to exchange auth code');
+            }
+        } catch (e) {
+            this.log.error(`[YOUTUBE-AUTH] Error processing auth code: ${e.message}`);
+        }
+    }
+
+    /**
+     * Clear the YouTube auth code from adapter config
+     */
+    async clearYouTubeAuthCodeFromConfig() {
+        try {
+            // Get current config object
+            const obj = await this.getForeignObjectAsync(`system.adapter.${this.namespace}`);
+            if (obj && obj.native) {
+                obj.native.youtubeAuthCode = '';
+                await this.setForeignObjectAsync(`system.adapter.${this.namespace}`, obj);
+                this.log.info('[YOUTUBE-AUTH] Cleared auth code from config');
+            }
+        } catch (e) {
+            this.log.warn(`[YOUTUBE-AUTH] Could not clear auth code from config: ${e.message}`);
         }
     }
 

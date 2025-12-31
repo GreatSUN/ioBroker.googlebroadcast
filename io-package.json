@@ -1,8 +1,11 @@
 {
   "common": {
     "name": "googlebroadcast",
-    "version": "0.7.4",
+    "version": "0.7.5",
     "news": {
+      "0.7.5": {
+        "en": "Simplified YouTube auth: standard Save button workflow, code processed on adapter start"
+      },
       "0.7.4": {
         "en": "Fixed YouTube OAuth: use adapter IP instead of localhost, added token persistence in io-package.json"
       },
@@ -120,7 +123,8 @@
     "webServerIp": "",
     "webServerPort": 8091,
     "manualIp": "",
-    "deviceRemovalTimeout": 24
+    "deviceRemovalTimeout": 24,
+    "youtubeAuthCode": ""
   },
   "objects": [],
   "instanceObjects": [
