@@ -20,6 +20,11 @@
             
             // Store settings for YouTube auth URL generation
             adapterWebServerPort = settings.webServerPort || 8091;
+            // Use configured webServerIp if available
+            if (settings.webServerIp) {
+                adapterWebServerIp = settings.webServerIp;
+                console.log('GoogleBroadcast: Using configured webServerIp:', adapterWebServerIp);
+            }
             
             $('.value').each(function () {
                 var $key = $(this);
@@ -509,14 +514,14 @@
                     <p><strong>Select authentication method:</strong></p>
                     <p>
                         <label>
-                            <input type="radio" name="youtubeAuthMode" value="automatic" checked />
-                            <span><strong>Automatic</strong> - Opens popup, code captured automatically. Only works from localhost.</span>
+                            <input type="radio" name="youtubeAuthMode" value="automatic" />
+                            <span><strong>Automatic</strong> - Opens popup, code captured automatically (only works from localhost)</span>
                         </label>
                     </p>
                     <p>
                         <label>
-                            <input type="radio" name="youtubeAuthMode" value="safe" />
-                            <span><strong>Safe Mode</strong> - Opens new tab, copy/paste code. Works from any location.</span>
+                            <input type="radio" name="youtubeAuthMode" value="safe" checked />
+                            <span><strong>Safe Mode (Recommended)</strong> - Opens new tab, copy/paste code. Works from any location.</span>
                         </label>
                     </p>
                 </div>
@@ -527,8 +532,8 @@
                     <a class="waves-effect waves-light btn grey" id="btn_youtube_clear" style="margin-left: 10px;">Clear Tokens</a>
                 </div>
                 
-                <!-- Safe Mode: Code Input (saved with standard Save button) -->
-                <div id="youtube_safe_mode_input" class="safe-mode-input col s12" style="margin-top: 15px;">
+                <!-- Safe Mode: Code Input (saved with standard Save button) - visible by default since Safe Mode is default -->
+                <div id="youtube_safe_mode_input" class="safe-mode-input visible col s12" style="margin-top: 15px;">
                     <div class="input-field">
                         <input type="text" id="youtubeAuthCode" class="value" />
                         <label for="youtubeAuthCode">Paste authorization code here (will be processed on Save)</label>

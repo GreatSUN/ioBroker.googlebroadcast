@@ -402,15 +402,19 @@ class GoogleBroadcast extends utils.Adapter {
         try {
             const authCode = this.config.youtubeAuthCode;
             
+            this.log.info(`[YOUTUBE-AUTH] Checking for auth code in config: ${authCode ? 'found (' + authCode.length + ' chars)' : 'not found'}`);
+            
             if (!authCode || authCode.trim() === '') {
                 this.log.debug('[YOUTUBE-AUTH] No auth code in config');
                 return;
             }
             
-            this.log.info('[YOUTUBE-AUTH] Found auth code in config, exchanging for tokens...');
+            this.log.info('[YOUTUBE-AUTH] Found auth code in config, checking for existing tokens...');
             
             // Check if we already have tokens
             const tokenState = await this.getStateAsync('youtube_oauth_tokens');
+            this.log.debug(`[YOUTUBE-AUTH] Token state: ${tokenState ? JSON.stringify(tokenState.val).substring(0, 100) : 'null'}`);
+            
             if (tokenState && tokenState.val && tokenState.val !== '') {
                 try {
                     const existingTokens = JSON.parse(tokenState.val);
@@ -421,22 +425,24 @@ class GoogleBroadcast extends utils.Adapter {
                         return;
                     }
                 } catch (e) {
-                    // Invalid token JSON, proceed with exchange
+                    this.log.warn(`[YOUTUBE-AUTH] Invalid token JSON, proceeding with exchange: ${e.message}`);
                 }
             }
             
             // Exchange the code for tokens
+            this.log.info(`[YOUTUBE-AUTH] Exchanging auth code (${authCode.trim().substring(0, 10)}...) for tokens...`);
             const tokens = await this.exchangeYouTubeCodeSafeMode(authCode.trim());
             
             if (tokens) {
-                this.log.info('[YOUTUBE-AUTH] Successfully exchanged auth code for tokens');
+                this.log.info(`[YOUTUBE-AUTH] Successfully exchanged auth code for tokens! access_token: ${tokens.access_token ? 'present' : 'missing'}, refresh_token: ${tokens.refresh_token ? 'present' : 'missing'}`);
                 // Clear the auth code from config
                 await this.clearYouTubeAuthCodeFromConfig();
             } else {
-                this.log.error('[YOUTUBE-AUTH] Failed to exchange auth code');
+                this.log.error('[YOUTUBE-AUTH] Failed to exchange auth code - no tokens returned');
             }
         } catch (e) {
             this.log.error(`[YOUTUBE-AUTH] Error processing auth code: ${e.message}`);
+            this.log.error(`[YOUTUBE-AUTH] Stack: ${e.stack}`);
         }
     }
 

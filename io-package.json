@@ -1,8 +1,11 @@
 {
   "common": {
     "name": "googlebroadcast",
-    "version": "0.7.5",
+    "version": "0.7.6",
     "news": {
+      "0.7.6": {
+        "en": "Fixed YouTube auth: Safe Mode is now default, use configured webServerIp, improved debugging"
+      },
       "0.7.5": {
         "en": "Simplified YouTube auth: standard Save button workflow, code processed on adapter start"
       },
