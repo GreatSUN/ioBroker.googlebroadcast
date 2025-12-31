@@ -1,9 +1,13 @@
 {
   "common": {
     "name": "googlebroadcast",
-    "version": "0.8.1",
+    "version": "0.8.2",
     "messagebox": true,
     "news": {
+      "0.8.2": {
+        "en": "Fixed YouTube metadata extraction using oEmbed (removed play-dl dependency) and fixed Assistant Init path error",
+        "de": "YouTube-Metadatenabruf mittels oEmbed repariert (play-dl Abhängigkeit entfernt) und Assistant Init Pfad-Fehler behoben"
+      },
       "0.8.1": {
         "en": "Re-Added accidently removed admin UI parts",
         "de": "Versehentlich gelöschte Bereiche im Admin-UI wieder hinzugefügt"

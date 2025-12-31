@@ -11,8 +11,6 @@ const fs = require('fs');
 const path = require('path');
 const os = require('os');
 const http = require('http');
-// Wir nutzen play-dl nur als Info-Parser (kein Login nötig für Metadaten)
-const playDl = require('play-dl');
 
 class GoogleBroadcast extends utils.Adapter {
     constructor(options) {
@@ -102,10 +100,16 @@ class GoogleBroadcast extends utils.Adapter {
             const credentialsJson = this.config.jsonCredentials;
             const tokenState = await this.getStateAsync('tokens');
             
+            // Fix: Check paths before use
+            if (!this.credsPath || !this.tokensPath) {
+                this.log.error('Internal Error: Credentials paths not initialized.');
+                return;
+            }
+            
             // Auto-Exchange Logik für Tokens, falls User Code in 'tokens' state geschrieben hat
             let tokensJson = null;
             if (tokenState && tokenState.val && !tokenState.val.includes('{')) {
-                // Sieht aus wie ein Auth-Code, versuchen wir ihn zu tauschen (Legacy Support)
+                // Sieht aus wie ein Auth-Code
                 this.log.info('Auth code detected in tokens state. Please use external tool to generate tokens if this fails.');
             } else if (tokenState) {
                 tokensJson = tokenState.val;
@@ -143,7 +147,11 @@ class GoogleBroadcast extends utils.Adapter {
     }
 
     async triggerAssistantCommand(deviceId, deviceName, command) {
-        if (!this.assistant || !this.assistantReady) return;
+        if (!this.assistant || !this.assistantReady) {
+            // Versuch eines Re-Init, falls nicht bereit
+            await this.initGoogleAssistant();
+            if (!this.assistantReady) return;
+        }
 
         // Command für spezifisches Gerät anpassen
         const finalCommand = `${command} auf ${deviceName}`;
@@ -161,40 +169,24 @@ class GoogleBroadcast extends utils.Adapter {
         });
     }
 
+    /**
+     * Holt den Titel via YouTube oEmbed API (kein Login/Parser nötig!)
+     */
     async getPlaylistTitle(url) {
         try {
-            if (!playDl.yt_validate(url)) return null;
+            // Wir nutzen die offizielle oEmbed Schnittstelle von YouTube.
+            // Die liefert JSON Daten für jede öffentliche URL.
+            const oembedUrl = `https://www.youtube.com/oembed?url=${encodeURIComponent(url)}&format=json`;
             
-            // Fallunterscheidung: Video oder Playlist?
-            if (url.includes('list=')) {
-                // Bei Playlists holen wir den Info der Playlist
-                // play-dl braucht evtl playlist_info
-                // Wir nutzen einen simplen Check: video_info liefert auch Details, wenn es Teil einer Playlist ist,
-                // aber wir wollen den NAMEN der Playlist oft.
-                
-                // Da play-dl ohne Auth bei privaten Playlists zickt, versuchen wir den Video-Titel, 
-                // falls es eine Video-URL ist.
-                // Wenn es eine reine Playlist-URL ist (ohne v=), müssen wir playlist_info nehmen.
-                
-                if (url.includes('v=')) {
-                    // Es ist ein Video IN einer Playlist -> Wir nehmen den Video Titel
-                    // ODER den Playlist Titel? User will Playlist abspielen.
-                    // Google Assistant versteht "Spiele Playlist X".
-                    // Wir versuchen die Playlist Info zu holen.
-                    const playlistId = url.split('list=')[1].split('&')[0];
-                    const playlistInfo = await playDl.playlist_info(`https://www.youtube.com/playlist?list=${playlistId}`, { incomplete: true });
-                    return `Playlist ${playlistInfo.title}`;
-                } else {
-                    const playlistInfo = await playDl.playlist_info(url, { incomplete: true });
-                    return `Playlist ${playlistInfo.title}`;
-                }
-            } else {
-                // Einzelnes Video
-                const info = await playDl.video_info(url);
-                return info.video_details.title;
+            this.log.debug(`[METADATA] Fetching oEmbed info for: ${url}`);
+            const response = await axios.get(oembedUrl, { timeout: 3000 });
+            
+            if (response.data && response.data.title) {
+                return response.data.title;
             }
+            return null;
         } catch (e) {
-            this.log.warn(`[METADATA] Could not extract title: ${e.message}`);
+            this.log.warn(`[METADATA] Could not extract title via oEmbed: ${e.message}`);
             return null;
         }
     }
@@ -331,7 +323,13 @@ class GoogleBroadcast extends utils.Adapter {
         }
     }
 
-    async onMessage(obj) { /* ... */ }
+    async onMessage(obj) {
+        if (!obj || !obj.command) return;
+        if (obj.command === 'scan') {
+            this.scanNetwork();
+            if (obj.callback) this.sendTo(obj.from, obj.command, { result: 'ok' }, obj.callback);
+        }
+    }
     
     onUnload(callback) {
         if (this.server) this.server.close();
