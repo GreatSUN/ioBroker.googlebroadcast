@@ -231,7 +231,7 @@
                     var status = response.status;
                     
                     if (status.connected) {
-                        $status.removeClass('disconnected').addClass('connected');
+                        $status.removeClass('amber lighten-4').addClass('green lighten-4');
                         $statusIcon.text('✓');
                         
                         var text = 'Connected';
@@ -245,12 +245,12 @@
                         }
                         $statusText.text(text);
                     } else {
-                        $status.removeClass('connected').addClass('disconnected');
+                        $status.removeClass('green lighten-4').addClass('amber lighten-4');
                         $statusIcon.text('⚪');
                         $statusText.text('Not connected');
                     }
                 } else {
-                    $status.removeClass('connected').addClass('disconnected');
+                    $status.removeClass('green lighten-4').addClass('amber lighten-4');
                     $statusIcon.text('⚪');
                     $statusText.text('Not connected');
                 }
@@ -344,87 +344,8 @@
     </script>
     
     <style>
-        .auth-link-box {
-            background-color: #1565c0 !important; color: #ffffff !important;
-            padding: 15px; border-radius: 4px; margin-top: 10px; text-align: center;
-        }
-        .auth-link-box a {
-            color: #ffca28 !important; font-size: 1.3em; font-weight: bold; text-decoration: underline; display: block; margin-top: 5px;
-        }
-        /* YouTube Premium Auth Styles */
-        .youtube-auth-section {
-            background-color: #f5f5f5;
-            border: 1px solid #e0e0e0;
-            border-radius: 8px;
-            padding: 20px;
-            margin-top: 10px;
-        }
-        .youtube-status {
-            padding: 10px 15px;
-            border-radius: 4px;
-            margin-bottom: 15px;
-            display: flex;
-            align-items: center;
-            gap: 10px;
-        }
-        .youtube-status.connected {
-            background-color: #e8f5e9;
-            border: 1px solid #4caf50;
-            color: #2e7d32;
-        }
-        .youtube-status.disconnected {
-            background-color: #fff3e0;
-            border: 1px solid #ff9800;
-            color: #e65100;
-        }
-        .youtube-status-icon {
-            font-size: 1.5em;
-        }
-        .auth-mode-container {
-            margin: 15px 0;
-            padding: 15px;
-            background-color: #fff;
-            border-radius: 4px;
-        }
-        .auth-mode-option {
-            padding: 10px 0;
-            border-bottom: 1px solid #eee;
-        }
-        .auth-mode-option:last-child {
-            border-bottom: none;
-        }
-        .auth-mode-option label {
-            display: flex;
-            align-items: flex-start;
-            cursor: pointer;
-        }
-        .auth-mode-option .mode-info {
-            margin-left: 10px;
-        }
-        .auth-mode-option .mode-title {
-            font-weight: bold;
-            color: #333;
-        }
-        .auth-mode-option .mode-desc {
-            font-size: 0.85em;
-            color: #666;
-            margin-top: 3px;
-        }
-        .auth-mode-option .mode-warning {
-            font-size: 0.8em;
-            color: #ff9800;
-            margin-top: 3px;
-        }
-        .safe-mode-input {
-            margin-top: 15px;
-            padding: 15px;
-            background-color: #e3f2fd;
-            border-radius: 4px;
-            display: none;
-        }
-        .safe-mode-input.visible {
-            display: block;
-        }
+        .safe-mode-input { display: none; }
+        .safe-mode-input.visible { display: block; }
     </style>
 </head>
 <body>
@@ -539,62 +460,48 @@
         </div>
 
         <!-- YouTube Premium Authentication Section -->
-        <div class="row cast-only" style="display:none; padding: 10px;">
+        <div class="row cast-only" style="display:none;">
             <div class="col s12">
                 <h5>🎵 YouTube Premium Authentication</h5>
-                <div class="youtube-auth-section">
-                    <!-- Status Display -->
-                    <div id="youtube_status" class="youtube-status disconnected">
-                        <span id="youtube_status_icon" class="youtube-status-icon">⚪</span>
+                
+                <!-- Status Display -->
+                <div class="col s12">
+                    <div id="youtube_status" class="card-panel amber lighten-4">
+                        <span id="youtube_status_icon">⚪</span>
                         <span id="youtube_status_text">Not connected</span>
                     </div>
-                    
-                    <!-- Authentication Mode Selection -->
-                    <div class="auth-mode-container">
-                        <p style="margin-bottom: 15px; font-weight: bold;">Select authentication method:</p>
-                        
-                        <div class="auth-mode-option">
-                            <label>
-                                <input type="radio" name="youtubeAuthMode" value="automatic" checked />
-                                <span class="mode-info">
-                                    <span class="mode-title">Automatic (recommended if accessing ioBroker locally)</span>
-                                    <div class="mode-desc">Opens authorization in popup. Code is captured automatically.</div>
-                                    <div class="mode-warning">⚠️ Only works when accessing ioBroker from the same machine (localhost).</div>
-                                </span>
-                            </label>
-                        </div>
-                        
-                        <div class="auth-mode-option">
-                            <label>
-                                <input type="radio" name="youtubeAuthMode" value="safe" />
-                                <span class="mode-info">
-                                    <span class="mode-title">Safe Mode (works from any location)</span>
-                                    <div class="mode-desc">Opens authorization in new tab. You'll need to copy the code shown by Google and paste it below.</div>
-                                </span>
-                            </label>
-                        </div>
+                </div>
+                
+                <!-- Authentication Mode Selection -->
+                <div class="col s12">
+                    <p><strong>Select authentication method:</strong></p>
+                    <p>
+                        <label>
+                            <input type="radio" name="youtubeAuthMode" value="automatic" checked />
+                            <span><strong>Automatic</strong> - Opens popup, code captured automatically. Only works from localhost.</span>
+                        </label>
+                    </p>
+                    <p>
+                        <label>
+                            <input type="radio" name="youtubeAuthMode" value="safe" />
+                            <span><strong>Safe Mode</strong> - Opens new tab, copy/paste code. Works from any location.</span>
+                        </label>
+                    </p>
+                </div>
+                
+                <!-- Authorize Button -->
+                <div class="col s12" style="margin-top: 10px;">
+                    <a class="waves-effect waves-light btn red" id="btn_youtube_auth">Authorize YouTube Premium</a>
+                    <a class="waves-effect waves-light btn grey" id="btn_youtube_clear" style="margin-left: 10px;">Clear Tokens</a>
+                </div>
+                
+                <!-- Safe Mode: Code Input -->
+                <div id="youtube_safe_mode_input" class="safe-mode-input col s12" style="margin-top: 15px;">
+                    <div class="input-field">
+                        <input type="text" id="youtube_auth_code" />
+                        <label for="youtube_auth_code">Paste authorization code here</label>
                     </div>
-                    
-                    <!-- Authorize Button -->
-                    <div style="margin-top: 15px;">
-                        <a class="waves-effect waves-light btn red" id="btn_youtube_auth">
-                            Authorize YouTube Premium
-                        </a>
-                        <a class="waves-effect waves-light btn grey" id="btn_youtube_clear" style="margin-left: 10px;">
-                            Clear Tokens
-                        </a>
-                    </div>
-                    
-                    <!-- Safe Mode: Code Input -->
-                    <div id="youtube_safe_mode_input" class="safe-mode-input">
-                        <p style="margin-bottom: 10px;"><strong>Safe Mode:</strong> Paste the authorization code from Google below:</p>
-                        <div class="input-field" style="margin: 0;">
-                            <input type="text" id="youtube_auth_code" placeholder="Paste authorization code here..." />
-                        </div>
-                        <a class="waves-effect waves-light btn green" id="btn_youtube_submit_code" style="margin-top: 10px;">
-                            Submit Code
-                        </a>
-                    </div>
+                    <a class="waves-effect waves-light btn green" id="btn_youtube_submit_code">Submit Code</a>
                 </div>
             </div>
         </div>

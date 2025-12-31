@@ -1,10 +1,13 @@
 {
   "common": {
     "name": "googlebroadcast",
-    "version": "0.7.0",
+    "version": "0.7.1",
     "news": {
+      "0.7.1": {
+        "en": "Removed custom CSS, using default ioBroker/Materialize styles"
+      },
       "0.7.0": {
-        "en": "Added YouTube Premium OAuth authentication in admin UI with automatic and safe mode support"
+        "en": "Added YouTube Premium OAuth authentication in admin UI"
       },
       "0.6.2": {
         "en": "Added model-name and mdns-id states for better device identification"
