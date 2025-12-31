@@ -4,6 +4,7 @@ const utils = require('@iobroker/adapter-core');
 const GoogleAssistant = require('google-assistant');
 const mDNS = require('multicast-dns');
 const { google } = require('googleapis');
+const { OAuth2Client } = require('google-auth-library');
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
@@ -14,12 +15,15 @@ const DefaultMediaReceiver = require('castv2-client').DefaultMediaReceiver;
 const googleTTS = require('google-tts-api');
 const playDl = require('play-dl');
 
+// YouTube OAuth Configuration - credentials are loaded from jsonCredentials config (same as Assistant SDK)
+const YOUTUBE_SCOPES = ['https://www.googleapis.com/auth/youtube'];
+
 class GoogleBroadcast extends utils.Adapter {
     constructor(options) {
         super({ ...options, name: 'googlebroadcast' });
         this.on('ready', this.onReady.bind(this));
         this.on('stateChange', this.onStateChange.bind(this));
-        this.on('message', this.onMessage.bind(this)); // Fixed: Ensured function exists
+        this.on('message', this.onMessage.bind(this));
         this.on('unload', this.onUnload.bind(this));
 
         this.assistant = null;
@@ -36,15 +40,15 @@ class GoogleBroadcast extends utils.Adapter {
         this.stereoMap = new Map();
         this.groupsByIp = new Map();
         this.devicesByIp = new Map();
-        this.groupsByNorm = new Map(); // Normalized Group Name -> Group Info
-        this.devicesByNorm = new Map(); // Normalized Device Name -> Device ID
-        this.devicesByModel = new Map(); // Model Name (md=) -> Device cleanId (for reverse lookup)
+        this.groupsByNorm = new Map();
+        this.devicesByNorm = new Map();
+        this.devicesByModel = new Map();
     }
 
     normalizeName(name) {
         return name.toLowerCase()
-            .replace(/[^a-z0-9]/g, '') // remove all non-alphanumeric (spaces, dashes, underscores)
-            .replace(/(pair|paar)$/, ''); // remove suffix at the end
+            .replace(/[^a-z0-9]/g, '')
+            .replace(/(pair|paar)$/, '');
     }
 
     async onReady() {
@@ -67,11 +71,9 @@ class GoogleBroadcast extends utils.Adapter {
         if (this.config.broadcastMode === 'cast') {
             this.log.info('Mode: Chromecast TTS (Cast)');
             this.setState('info.connection', true, true);
-            // Initialize play-dl for YouTube Premium support
             await this.initPlayDl();
         } else {
             await this.initGoogleAssistant();
-            // Initialize play-dl for YouTube Premium support
             await this.initPlayDl();
         }
 
@@ -90,10 +92,8 @@ class GoogleBroadcast extends utils.Adapter {
         this.subscribeStates('devices.*.youtube-url');
         this.subscribeStates('groups.*.youtube-url');
 
-        // Ensure youtube-url state exists for all existing devices
         await this.ensureYouTubeUrlStates();
 
-        // Start Volume Polling
         const pollIntervalSec = this.config.pollInterval || 30;
         this.log.info(`[CONFIG] Volume Poll Interval: ${pollIntervalSec}s`);
         this.pollVolume();
@@ -103,7 +103,6 @@ class GoogleBroadcast extends utils.Adapter {
     }
 
     async ensureYouTubeUrlStates() {
-        // Ensure youtube-url state exists for all existing devices and groups
         const folders = ['devices', 'groups'];
         for (const folder of folders) {
             const devices = await this.getDevicesAsync();
@@ -141,7 +140,63 @@ class GoogleBroadcast extends utils.Adapter {
     }
 
     startWebServer() {
-        this.server = http.createServer((req, res) => {
+        this.server = http.createServer(async (req, res) => {
+            const url = new URL(req.url, `http://localhost:${this.serverPort}`);
+            
+            // Handle YouTube OAuth callback (Automatic mode)
+            if (url.pathname === '/oauth/youtube') {
+                const code = url.searchParams.get('code');
+                const error = url.searchParams.get('error');
+                
+                if (error) {
+                    this.log.error(`[YOUTUBE-AUTH] OAuth error: ${error}`);
+                    res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+                    res.end(`<!DOCTYPE html><html><head><title>YouTube Authorization Failed</title></head>
+                        <body style="font-family: Arial, sans-serif; text-align: center; padding: 50px;">
+                        <h1 style="color: #d32f2f;">❌ Authorization Failed</h1>
+                        <p>Error: ${error}</p>
+                        <p>Please close this tab and try again.</p>
+                        </body></html>`);
+                    return;
+                }
+                
+                if (code) {
+                    try {
+                        const tokens = await this.exchangeYouTubeCode(code);
+                        if (tokens) {
+                            res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+                            res.end(`<!DOCTYPE html><html><head><title>YouTube Authorization Successful</title></head>
+                                <body style="font-family: Arial, sans-serif; text-align: center; padding: 50px;">
+                                <h1 style="color: #4caf50;">✓ YouTube Premium Connected!</h1>
+                                <p>Authorization successful. You can close this tab.</p>
+                                <script>setTimeout(function() { window.close(); }, 3000);</script>
+                                </body></html>`);
+                        } else {
+                            throw new Error('Token exchange failed');
+                        }
+                    } catch (e) {
+                        this.log.error(`[YOUTUBE-AUTH] Token exchange error: ${e.message}`);
+                        res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+                        res.end(`<!DOCTYPE html><html><head><title>YouTube Authorization Failed</title></head>
+                            <body style="font-family: Arial, sans-serif; text-align: center; padding: 50px;">
+                            <h1 style="color: #d32f2f;">❌ Token Exchange Failed</h1>
+                            <p>Error: ${e.message}</p>
+                            <p>Please close this tab and try again using Safe Mode.</p>
+                            </body></html>`);
+                    }
+                    return;
+                }
+                
+                res.writeHead(400, { 'Content-Type': 'text/html; charset=utf-8' });
+                res.end(`<!DOCTYPE html><html><head><title>Invalid Request</title></head>
+                    <body style="font-family: Arial, sans-serif; text-align: center; padding: 50px;">
+                    <h1 style="color: #ff9800;">⚠️ Invalid Request</h1>
+                    <p>No authorization code received.</p>
+                    </body></html>`);
+                return;
+            }
+            
+            // Handle TTS audio streaming
             const match = req.url.match(/^\/tts\/(.+)\.mp3/);
             if (match && match[1]) {
                 const deviceId = match[1];
@@ -156,6 +211,81 @@ class GoogleBroadcast extends utils.Adapter {
             res.end();
         });
         this.server.listen(this.serverPort, () => this.log.info(`WebServer running on ${this.serverPort}`));
+    }
+
+    /**
+     * Parse YouTube OAuth credentials from jsonCredentials config
+     * @returns {object|null} - {client_id, client_secret} or null
+     */
+    getYouTubeCredentials() {
+        try {
+            const credentialsJson = this.config.jsonCredentials;
+            if (!credentialsJson) {
+                this.log.error('[YOUTUBE-AUTH] No jsonCredentials configured');
+                return null;
+            }
+            
+            const credentials = JSON.parse(credentialsJson);
+            const config = credentials.installed || credentials.web || credentials;
+            
+            if (!config.client_id || !config.client_secret) {
+                this.log.error('[YOUTUBE-AUTH] Invalid credentials: missing client_id or client_secret');
+                return null;
+            }
+            
+            return {
+                client_id: config.client_id,
+                client_secret: config.client_secret,
+                redirect_uris: config.redirect_uris || []
+            };
+        } catch (e) {
+            this.log.error(`[YOUTUBE-AUTH] Failed to parse credentials: ${e.message}`);
+            return null;
+        }
+    }
+
+    /**
+     * Exchange YouTube authorization code for tokens
+     * @param {string} code - Authorization code from Google OAuth
+     * @returns {object|null} - Token object or null on failure
+     */
+    async exchangeYouTubeCode(code) {
+        try {
+            const creds = this.getYouTubeCredentials();
+            if (!creds) {
+                throw new Error('No valid OAuth credentials configured');
+            }
+            
+            const redirectUri = `http://localhost:${this.serverPort}/oauth/youtube`;
+            
+            this.log.info(`[YOUTUBE-AUTH] Exchanging code for tokens...`);
+            
+            const oAuth2Client = new OAuth2Client(creds.client_id, creds.client_secret, redirectUri);
+            const { tokens } = await oAuth2Client.getToken(code);
+            
+            this.log.info(`[YOUTUBE-AUTH] Token exchange successful`);
+            this.log.debug(`[YOUTUBE-AUTH] Tokens: access_token=${tokens.access_token ? 'present' : 'missing'}, refresh_token=${tokens.refresh_token ? 'present' : 'missing'}`);
+            
+            await this.setObjectNotExistsAsync('youtube_oauth_tokens', {
+                type: 'state',
+                common: {
+                    name: 'YouTube OAuth Tokens',
+                    type: 'string',
+                    role: 'json',
+                    read: true,
+                    write: true,
+                    desc: 'YouTube Premium OAuth tokens for play-dl'
+                }
+            });
+            await this.setStateAsync('youtube_oauth_tokens', JSON.stringify(tokens), true);
+            
+            await this.initPlayDl();
+            
+            return tokens;
+        } catch (e) {
+            this.log.error(`[YOUTUBE-AUTH] Exchange error: ${e.message}`);
+            return null;
+        }
     }
 
     async initGoogleAssistant() {
@@ -179,36 +309,111 @@ class GoogleBroadcast extends utils.Adapter {
 
     async initPlayDl() {
         try {
-            // Check if we have YouTube OAuth tokens stored
-            const ytTokenState = await this.getStateAsync('youtube_tokens');
-            const ytTokens = ytTokenState ? ytTokenState.val : null;
+            await this.setObjectNotExistsAsync('youtube_oauth_tokens', {
+                type: 'state',
+                common: {
+                    name: 'YouTube OAuth Tokens',
+                    type: 'string',
+                    role: 'json',
+                    read: true,
+                    write: true,
+                    desc: 'YouTube Premium OAuth tokens'
+                }
+            });
             
-            if (ytTokens) {
-                // Parse and set the tokens for play-dl
-                const tokens = JSON.parse(ytTokens);
-                await playDl.setToken({
-                    youtube: {
-                        cookie: tokens.cookie || ''
+            const ytOAuthState = await this.getStateAsync('youtube_oauth_tokens');
+            const ytOAuthTokens = ytOAuthState ? ytOAuthState.val : null;
+            
+            if (ytOAuthTokens && ytOAuthTokens !== '') {
+                const tokens = JSON.parse(ytOAuthTokens);
+                
+                if (tokens.access_token) {
+                    this.log.info('[YOUTUBE] OAuth tokens found, configuring play-dl...');
+                    
+                    if (tokens.expiry_date && Date.now() >= tokens.expiry_date) {
+                        this.log.info('[YOUTUBE] Access token expired, refreshing...');
+                        const refreshedTokens = await this.refreshYouTubeToken(tokens);
+                        if (refreshedTokens) {
+                            await this.setPlayDlToken(refreshedTokens);
+                        }
+                    } else {
+                        await this.setPlayDlToken(tokens);
+                        this.log.debug(`[YOUTUBE] Token expires: ${tokens.expiry_date ? new Date(tokens.expiry_date).toISOString() : 'unknown'}`);
                     }
-                });
-                this.log.info('[YOUTUBE] play-dl initialized with stored tokens');
+                } else {
+                    this.log.warn('[YOUTUBE] OAuth tokens present but missing access_token');
+                }
             } else {
                 this.log.info('[YOUTUBE] No YouTube tokens found. YouTube Premium features may require authentication.');
-                // Create the youtube_tokens state if it doesn't exist
-                await this.setObjectNotExistsAsync('youtube_tokens', {
-                    type: 'state',
-                    common: {
-                        name: 'YouTube OAuth Tokens',
-                        type: 'string',
-                        role: 'json',
-                        read: true,
-                        write: true,
-                        desc: 'Stored YouTube OAuth tokens for play-dl'
-                    }
-                });
             }
         } catch (e) {
             this.log.warn(`[YOUTUBE] play-dl init: ${e.message}`);
+        }
+    }
+
+    /**
+     * Set play-dl token for YouTube authentication
+     * @param {object} tokens - OAuth tokens from Google
+     */
+    async setPlayDlToken(tokens) {
+        try {
+            const creds = this.getYouTubeCredentials();
+            if (!creds) {
+                this.log.warn('[YOUTUBE] Cannot set play-dl token: no credentials configured');
+                return;
+            }
+            
+            const playDlToken = {
+                access_token: tokens.access_token,
+                refresh_token: tokens.refresh_token,
+                token_type: tokens.token_type || 'Bearer',
+                expiry_date: tokens.expiry_date
+            };
+            
+            await playDl.setToken({
+                youtube: {
+                    cookie: ''
+                }
+            });
+            
+            this.youtubeTokens = playDlToken;
+            this.youtubeCredentials = creds;
+            
+            this.log.info('[YOUTUBE] play-dl configured with OAuth tokens');
+        } catch (e) {
+            this.log.error(`[YOUTUBE] Failed to set play-dl token: ${e.message}`);
+        }
+    }
+
+    /**
+     * Refresh YouTube OAuth token
+     * @param {object} tokens - Current token object with refresh_token
+     */
+    async refreshYouTubeToken(tokens) {
+        try {
+            if (!tokens.refresh_token) {
+                this.log.error('[YOUTUBE-AUTH] No refresh token available');
+                return null;
+            }
+            
+            const creds = this.getYouTubeCredentials();
+            if (!creds) {
+                throw new Error('No valid OAuth credentials configured');
+            }
+            
+            const oAuth2Client = new OAuth2Client(creds.client_id, creds.client_secret);
+            oAuth2Client.setCredentials(tokens);
+            
+            const { credentials } = await oAuth2Client.refreshAccessToken();
+            
+            this.log.info('[YOUTUBE-AUTH] Token refreshed successfully');
+            
+            await this.setStateAsync('youtube_oauth_tokens', JSON.stringify(credentials), true);
+            
+            return credentials;
+        } catch (e) {
+            this.log.error(`[YOUTUBE-AUTH] Token refresh error: ${e.message}`);
+            return null;
         }
     }
 
@@ -279,22 +484,19 @@ class GoogleBroadcast extends utils.Adapter {
         }
 
         try {
-            // Validate YouTube URL
             if (!playDl.yt_validate(youtubeUrl)) {
                 this.log.error(`[YOUTUBE] Invalid YouTube URL: ${youtubeUrl}`);
                 this.updateLastError(deviceId, `Invalid YouTube URL: ${youtubeUrl}`);
                 return;
             }
 
-            // Get video info for metadata
             const videoInfo = await playDl.video_info(youtubeUrl);
             const title = videoInfo.video_details.title || 'YouTube Stream';
             const artist = videoInfo.video_details.channel?.name || 'YouTube';
             
             this.log.debug(`[YOUTUBE] Video: "${title}" by ${artist}`);
 
-            // Get audio stream URL (format ending with *.googlevideo.com)
-            const stream = await playDl.stream(youtubeUrl, { quality: 2 }); // quality 2 = highest audio quality
+            const stream = await playDl.stream(youtubeUrl, { quality: 2 });
             const streamUrl = stream.url;
             
             if (!streamUrl || !streamUrl.includes('googlevideo.com')) {
@@ -325,7 +527,7 @@ class GoogleBroadcast extends utils.Adapter {
                             contentType: 'audio/mp4',
                             streamType: 'BUFFERED',
                             metadata: {
-                                metadataType: 3, // MusicTrackMediaMetadata
+                                metadataType: 3,
                                 title: title,
                                 artist: artist
                             }
@@ -405,7 +607,6 @@ class GoogleBroadcast extends utils.Adapter {
 
         this.log.silly(`[mDNS] Found ${friendlyName} at ${ip}:${port} (${model})`);
 
-        // Update Normalization Maps
         const normName = this.normalizeName(friendlyName);
         
         if (folder === 'groups') {
@@ -414,15 +615,12 @@ class GoogleBroadcast extends utils.Adapter {
                 this.groupsByNorm.set(normName, { name: friendlyName, ip: ip, port: port });
             }
 
-            // Check if we have a device waiting at this IP (Master)
             if (this.devicesByIp.has(ip) && isStereoPair) {
                 const childId = this.devicesByIp.get(ip);
                 this.stereoMap.set(childId, { pairIp: ip, pairPort: port, groupName: friendlyName });
                 this.extendObjectAsync(`devices.${childId}`, { native: { StereoSpeakerGroup: friendlyName } });
             }
 
-            // Fuzzy Match for Slave Speaker (Different IP)
-            // e.g., Device: "Living Room", Group: "Living Room-Paar" -> Norm: "livingroom"
             if (isStereoPair && this.devicesByNorm.has(normName)) {
                 const childId = this.devicesByNorm.get(normName);
                 this.log.info(`[STEREO] Fuzzy Link: ${childId} -> ${friendlyName} (Group)`);
@@ -438,7 +636,6 @@ class GoogleBroadcast extends utils.Adapter {
             this.devicesByIp.set(ip, cleanId);
             this.devicesByNorm.set(normName, cleanId);
 
-            // Check if this device shares IP with a Group (Master)
             if (this.groupsByIp.has(ip)) {
                 const g = this.groupsByIp.get(ip);
                 if (g.isStereo) {
@@ -446,7 +643,6 @@ class GoogleBroadcast extends utils.Adapter {
                 }
             }
 
-            // Fuzzy Match for Slave Speaker (Check if matching Group exists)
             if (this.groupsByNorm.has(normName)) {
                 const g = this.groupsByNorm.get(normName);
                 this.log.info(`[STEREO] Fuzzy Link: ${friendlyName} -> ${g.name} (Group)`);
@@ -454,43 +650,33 @@ class GoogleBroadcast extends utils.Adapter {
             }
         }
 
-        // Extract mDNS instance ID (e.g., "NestAudio5124" from "NestAudio5124._googlecast._tcp.local")
         const mdnsInstanceId = instanceName.split('._googlecast')[0];
         
         await this.setObjectNotExistsAsync(`${folder}.${cleanId}`, { type: 'device', common: { name: friendlyName }, native: { ip: ip, port: port, model: model, mdnsId: mdnsInstanceId } });
         
-        // Store mapping from mDNS instance ID to cleanId for reverse lookup
         this.devicesByModel.set(mdnsInstanceId, { cleanId: cleanId, folder: folder });
         
-        // Add Model Name State (stores the md= value from mDNS)
         await this.setObjectNotExistsAsync(`${folder}.${cleanId}.model-name`, { type: 'state', common: { name: 'Model Name', type: 'string', role: 'text', read: true, write: false, desc: 'Device model name from mDNS (md= field)' } });
         this.setState(`${folder}.${cleanId}.model-name`, model || '', true);
         
-        // Add mDNS Instance ID State (stores the instance name from mDNS PTR record)
         await this.setObjectNotExistsAsync(`${folder}.${cleanId}.mdns-id`, { type: 'state', common: { name: 'mDNS Instance ID', type: 'string', role: 'text', read: true, write: false, desc: 'mDNS instance identifier (e.g., NestAudio5124)' } });
         this.setState(`${folder}.${cleanId}.mdns-id`, mdnsInstanceId, true);
         
-        // Add Availability State
         await this.setObjectNotExistsAsync(`${folder}.${cleanId}.not-available`, { type: 'state', common: { name: 'Not Available', type: 'boolean', role: 'indicator.maintenance', read: true, write: false, def: false } });
         this.setState(`${folder}.${cleanId}.not-available`, false, true);
 
-        // Add No Response Timestamp State (for tracking when device stopped responding)
         await this.setObjectNotExistsAsync(`${folder}.${cleanId}.no-response-ts`, { type: 'state', common: { name: 'No Response Since', type: 'number', role: 'date', read: true, write: false, def: null, desc: 'Timestamp when device stopped responding (null if available)' } });
-        // Reset timestamp when device is discovered via mDNS
         this.setState(`${folder}.${cleanId}.no-response-ts`, null, true);
 
-        // Flag child speakers
         if (folder === 'devices' && this.stereoMap.has(cleanId)) {
             await this.extendObjectAsync(`${folder}.${cleanId}`, { native: { StereoSpeakerGroup: this.stereoMap.get(cleanId).groupName } });
         }
 
         await this.setObjectNotExistsAsync(`${folder}.${cleanId}.broadcast`, { type: 'state', common: { name: 'Broadcast', type: 'string', role: 'text', read: true, write: true } });
         
-        // Add Volume State
         await this.setObjectNotExistsAsync(`${folder}.${cleanId}.volume`, { type: 'state', common: { name: 'Volume', type: 'number', role: 'level.volume', read: true, write: true, min: 0, max: 100, unit: '%' } });
         this.subscribeStates(`${folder}.${cleanId}.volume`);
 
-        // Add YouTube URL State
         await this.setObjectNotExistsAsync(`${folder}.${cleanId}.youtube-url`, { type: 'state', common: { name: 'YouTube URL', type: 'string', role: 'media.url', read: true, write: true, desc: 'Play a YouTube video/audio URL on this device' } });
         this.subscribeStates(`${folder}.${cleanId}.youtube-url`);
     }
@@ -517,7 +703,7 @@ class GoogleBroadcast extends utils.Adapter {
 
     async pollVolume() {
         const folders = ['devices', 'groups'];
-        const removalTimeoutHours = this.config.deviceRemovalTimeout || 24; // Hours before device removal (0 = disable)
+        const removalTimeoutHours = this.config.deviceRemovalTimeout || 24;
 
         for (const folder of folders) {
             const states = await this.getStatesAsync(`${folder}.*.volume`);
@@ -532,18 +718,13 @@ class GoogleBroadcast extends utils.Adapter {
             for (const deviceId of uniqueIds) {
                 const obj = await this.getObjectAsync(deviceId);
                 
-                // Extract cleanId from the path
                 const relId = deviceId.split('.').slice(2).join('.');
                 const cleanId = relId.split('.').pop();
                 
-                // Check if this looks like an mDNS instance ID (e.g., NestAudio5124) instead of a friendly name
-                // mDNS instance IDs typically don't have spaces/underscores and follow a pattern like "DeviceType1234"
                 if (!obj || !obj.native || !obj.native.ip) {
-                    // Try to find the correct device using the devicesByModel map
                     const modelLookup = this.devicesByModel.get(cleanId);
                     if (modelLookup) {
                         this.log.debug(`[POLL] Found device by mDNS ID lookup: ${cleanId} -> ${modelLookup.cleanId}`);
-                        // Skip this iteration - the correct device will be polled via its proper cleanId
                         continue;
                     }
                     
@@ -577,7 +758,6 @@ class GoogleBroadcast extends utils.Adapter {
                              clearTimeout(timeout);
                              connected = true;
                              if (!err && status) {
-                                 // Device is available - reset states
                                  this.handleDeviceAvailable(folder, cleanId);
                                  if (status.volume) {
                                      const vol = Math.round(status.volume.level * 100);
@@ -600,14 +780,12 @@ class GoogleBroadcast extends utils.Adapter {
     async handleDeviceAvailable(folder, cleanId) {
         const relId = `${folder}.${cleanId}`;
         
-        // Check if device object exists before setting states
         const deviceObj = await this.getObjectAsync(relId);
         if (!deviceObj) {
             this.log.debug(`[POLL] Device ${cleanId} object not found, skipping availability update`);
             return;
         }
         
-        // Device is responding - reset not-available and no-response-ts
         this.setState(`${relId}.not-available`, false, true);
         this.setState(`${relId}.no-response-ts`, null, true);
     }
@@ -615,14 +793,12 @@ class GoogleBroadcast extends utils.Adapter {
     async handleDeviceUnavailable(folder, cleanId, removalTimeoutHours) {
         const relId = `${folder}.${cleanId}`;
         
-        // Check if device object exists before setting states
         const deviceObj = await this.getObjectAsync(relId);
         if (!deviceObj) {
             this.log.debug(`[POLL] Device ${cleanId} object not found, skipping unavailability update`);
             return;
         }
         
-        // Ensure no-response-ts state exists before trying to use it
         await this.setObjectNotExistsAsync(`${relId}.no-response-ts`, {
             type: 'state',
             common: {
@@ -636,21 +812,17 @@ class GoogleBroadcast extends utils.Adapter {
             }
         });
         
-        // Set not-available to true
         this.setState(`${relId}.not-available`, true, true);
         
-        // Get current no-response-ts state
         const tsState = await this.getStateAsync(`${relId}.no-response-ts`);
         let noResponseTs = tsState ? tsState.val : null;
         
-        // If this is the first time device is unavailable, set the timestamp
         if (noResponseTs === null || noResponseTs === undefined) {
             noResponseTs = Date.now();
             this.setState(`${relId}.no-response-ts`, noResponseTs, true);
             this.log.debug(`[POLL] Device ${cleanId} became unavailable, recording timestamp`);
         }
         
-        // Check if device should be removed (timeout reached)
         if (removalTimeoutHours > 0) {
             const elapsedMs = Date.now() - noResponseTs;
             const elapsedHours = elapsedMs / (1000 * 60 * 60);
@@ -661,7 +833,6 @@ class GoogleBroadcast extends utils.Adapter {
                 this.log.warn(`[CLEANUP] Removing device ${cleanId} after ${removalTimeoutHours} hours without response`);
                 await this.deleteDeviceAsync(relId);
                 
-                // Clean up internal maps
                 for (const [ip, id] of this.devicesByIp.entries()) {
                     if (id === cleanId) {
                         this.devicesByIp.delete(ip);
@@ -675,7 +846,6 @@ class GoogleBroadcast extends utils.Adapter {
 
     async deleteDeviceAsync(devicePath) {
         try {
-            // Get all states under this device
             const states = await this.getStatesAsync(`${devicePath}.*`);
             if (states) {
                 for (const stateId of Object.keys(states)) {
@@ -683,7 +853,6 @@ class GoogleBroadcast extends utils.Adapter {
                     await this.delObjectAsync(relId);
                 }
             }
-            // Delete the device object itself
             await this.delObjectAsync(devicePath);
             this.log.info(`[CLEANUP] Successfully deleted ${devicePath}`);
         } catch (e) {
@@ -718,7 +887,6 @@ class GoogleBroadcast extends utils.Adapter {
                     let targetIp = deviceObj.native.ip;
                     let targetPort = deviceObj.native.port;
 
-                    // Stereo Redirection Logic
                     if (this.stereoMap.has(deviceId)) {
                          const mapping = this.stereoMap.get(deviceId);
                          this.log.debug(`[VOLUME] Redirecting volume set for ${deviceId} to Group ${mapping.groupName}`);
@@ -742,17 +910,172 @@ class GoogleBroadcast extends utils.Adapter {
         }
     }
 
-    onMessage(obj) {
-        if (obj && obj.command === 'scan') {
-            this.scanNetwork();
-        } else if (obj && obj.command === 'clearTokens') {
-            // Clear stored tokens for re-authentication
-            this.setState('tokens', '', true);
-            this.setState('youtube_tokens', '', true);
-            this.log.info('[AUTH] Cleared stored tokens for re-authentication');
-            if (obj.callback) {
-                this.sendTo(obj.from, obj.command, { success: true }, obj.callback);
+    async onMessage(obj) {
+        if (!obj || !obj.command) return;
+        
+        switch (obj.command) {
+            case 'scan':
+                this.scanNetwork();
+                if (obj.callback) {
+                    this.sendTo(obj.from, obj.command, { success: true }, obj.callback);
+                }
+                break;
+                
+            case 'clearTokens':
+                await this.setStateAsync('tokens', '', true);
+                await this.setStateAsync('youtube_oauth_tokens', '', true);
+                this.log.info('[AUTH] Cleared stored tokens for re-authentication');
+                if (obj.callback) {
+                    this.sendTo(obj.from, obj.command, { success: true }, obj.callback);
+                }
+                break;
+                
+            case 'exchangeYouTubeCode':
+                if (obj.message && obj.message.code) {
+                    try {
+                        const tokens = await this.exchangeYouTubeCodeSafeMode(obj.message.code);
+                        if (obj.callback) {
+                            this.sendTo(obj.from, obj.command, {
+                                success: !!tokens,
+                                tokens: tokens ? { hasAccessToken: !!tokens.access_token, hasRefreshToken: !!tokens.refresh_token } : null
+                            }, obj.callback);
+                        }
+                    } catch (e) {
+                        this.log.error(`[YOUTUBE-AUTH] Safe mode exchange error: ${e.message}`);
+                        if (obj.callback) {
+                            this.sendTo(obj.from, obj.command, { success: false, error: e.message }, obj.callback);
+                        }
+                    }
+                } else {
+                    if (obj.callback) {
+                        this.sendTo(obj.from, obj.command, { success: false, error: 'No code provided' }, obj.callback);
+                    }
+                }
+                break;
+                
+            case 'getYouTubeAuthUrl':
+                const mode = obj.message && obj.message.mode || 'safe';
+                const authUrl = this.generateYouTubeAuthUrl(mode);
+                if (obj.callback) {
+                    this.sendTo(obj.from, obj.command, { success: true, url: authUrl, mode: mode }, obj.callback);
+                }
+                break;
+                
+            case 'getYouTubeTokenStatus':
+                try {
+                    const tokenState = await this.getStateAsync('youtube_oauth_tokens');
+                    let status = { connected: false, hasAccessToken: false, hasRefreshToken: false, expiryDate: null };
+                    
+                    if (tokenState && tokenState.val) {
+                        const tokens = JSON.parse(tokenState.val);
+                        status = {
+                            connected: !!tokens.access_token,
+                            hasAccessToken: !!tokens.access_token,
+                            hasRefreshToken: !!tokens.refresh_token,
+                            expiryDate: tokens.expiry_date || null,
+                            isExpired: tokens.expiry_date ? Date.now() >= tokens.expiry_date : false
+                        };
+                    }
+                    
+                    if (obj.callback) {
+                        this.sendTo(obj.from, obj.command, { success: true, status: status }, obj.callback);
+                    }
+                } catch (e) {
+                    if (obj.callback) {
+                        this.sendTo(obj.from, obj.command, { success: false, error: e.message }, obj.callback);
+                    }
+                }
+                break;
+                
+            case 'clearYouTubeTokens':
+                await this.setStateAsync('youtube_oauth_tokens', '', true);
+                this.log.info('[YOUTUBE-AUTH] Cleared YouTube tokens');
+                if (obj.callback) {
+                    this.sendTo(obj.from, obj.command, { success: true }, obj.callback);
+                }
+                break;
+                
+            default:
+                this.log.warn(`[MESSAGE] Unknown command: ${obj.command}`);
+                if (obj.callback) {
+                    this.sendTo(obj.from, obj.command, { success: false, error: 'Unknown command' }, obj.callback);
+                }
+        }
+    }
+
+    /**
+     * Generate YouTube OAuth URL
+     * @param {string} mode - 'automatic' or 'safe'
+     * @returns {string|null} OAuth URL or null if credentials missing
+     */
+    generateYouTubeAuthUrl(mode) {
+        const creds = this.getYouTubeCredentials();
+        if (!creds) {
+            this.log.error('[YOUTUBE-AUTH] Cannot generate auth URL: no credentials configured');
+            return null;
+        }
+        
+        let redirectUri;
+        
+        if (mode === 'automatic') {
+            redirectUri = `http://localhost:${this.serverPort}/oauth/youtube`;
+        } else {
+            redirectUri = 'urn:ietf:wg:oauth:2.0:oob';
+        }
+        
+        const params = new URLSearchParams({
+            access_type: 'offline',
+            scope: YOUTUBE_SCOPES.join(' '),
+            prompt: 'consent',
+            response_type: 'code',
+            client_id: creds.client_id,
+            redirect_uri: redirectUri
+        });
+        
+        return `https://accounts.google.com/o/oauth2/v2/auth?${params.toString()}`;
+    }
+
+    /**
+     * Exchange YouTube authorization code for tokens (Safe Mode - OOB)
+     * @param {string} code - Authorization code from Google
+     * @returns {object|null} Token object or null on failure
+     */
+    async exchangeYouTubeCodeSafeMode(code) {
+        try {
+            const creds = this.getYouTubeCredentials();
+            if (!creds) {
+                throw new Error('No valid OAuth credentials configured');
             }
+            
+            const redirectUri = 'urn:ietf:wg:oauth:2.0:oob';
+            
+            this.log.info('[YOUTUBE-AUTH] Safe mode: Exchanging code for tokens...');
+            
+            const oAuth2Client = new OAuth2Client(creds.client_id, creds.client_secret, redirectUri);
+            const { tokens } = await oAuth2Client.getToken(code);
+            
+            this.log.info('[YOUTUBE-AUTH] Safe mode: Token exchange successful');
+            this.log.debug(`[YOUTUBE-AUTH] Tokens: access_token=${tokens.access_token ? 'present' : 'missing'}, refresh_token=${tokens.refresh_token ? 'present' : 'missing'}`);
+            
+            await this.setObjectNotExistsAsync('youtube_oauth_tokens', {
+                type: 'state',
+                common: {
+                    name: 'YouTube OAuth Tokens',
+                    type: 'string',
+                    role: 'json',
+                    read: true,
+                    write: true,
+                    desc: 'YouTube Premium OAuth tokens'
+                }
+            });
+            await this.setStateAsync('youtube_oauth_tokens', JSON.stringify(tokens), true);
+            
+            await this.initPlayDl();
+            
+            return tokens;
+        } catch (e) {
+            this.log.error(`[YOUTUBE-AUTH] Safe mode exchange error: ${e.message}`);
+            throw e;
         }
     }
 

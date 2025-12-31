@@ -113,6 +113,148 @@
             $('#btn_scan').on('click', function() {
                 sendTo(null, 'scan', {}, function(res) { M.toast({html: 'Scan started'}); });
             });
+
+            // YouTube Premium Authentication
+            initYouTubeAuth();
+        }
+
+        // YouTube Premium Authentication Functions
+        function initYouTubeAuth() {
+            var target = adapter + '.' + instance;
+            
+            // Check initial YouTube token status
+            checkYouTubeTokenStatus();
+            
+            // Set up radio button change handler
+            $('input[name="youtubeAuthMode"]').on('change', function() {
+                var mode = $(this).val();
+                if (mode === 'safe') {
+                    $('#youtube_safe_mode_input').addClass('visible');
+                } else {
+                    $('#youtube_safe_mode_input').removeClass('visible');
+                }
+            });
+            
+            // Authorize YouTube button
+            $('#btn_youtube_auth').on('click', function() {
+                var mode = $('input[name="youtubeAuthMode"]:checked').val();
+                
+                // Request OAuth URL from adapter (uses credentials from jsonCredentials config)
+                sendTo(target, 'getYouTubeAuthUrl', { mode: mode }, function(response) {
+                    if (!response || !response.success) {
+                        var error = response && response.error ? response.error : 'Failed to generate auth URL. Make sure credentials.json is configured.';
+                        M.toast({html: '✗ ' + error});
+                        return;
+                    }
+                    
+                    if (!response.url) {
+                        M.toast({html: '✗ No credentials configured. Please paste credentials.json in the Assistant Credentials section first.'});
+                        return;
+                    }
+                    
+                    var url = response.url;
+                    
+                    if (mode === 'automatic') {
+                        // Open in popup for automatic mode
+                        var popup = window.open(url, 'YouTube Authorization', 'width=600,height=700');
+                        
+                        // Poll for completion
+                        var pollInterval = setInterval(function() {
+                            if (popup.closed) {
+                                clearInterval(pollInterval);
+                                // Check if tokens were received
+                                setTimeout(function() {
+                                    checkYouTubeTokenStatus();
+                                }, 1000);
+                            }
+                        }, 500);
+                    } else {
+                        // Open in new tab for safe mode
+                        window.open(url, '_blank');
+                        $('#youtube_safe_mode_input').addClass('visible');
+                        M.toast({html: 'Copy the code from Google and paste it below'});
+                    }
+                });
+            });
+            
+            // Submit code button (Safe mode)
+            $('#btn_youtube_submit_code').on('click', function() {
+                var code = $('#youtube_auth_code').val().trim();
+                if (!code) {
+                    M.toast({html: 'Please enter the authorization code'});
+                    return;
+                }
+                
+                $(this).addClass('disabled');
+                $('#youtube_auth_code').prop('disabled', true);
+                
+                sendTo(target, 'exchangeYouTubeCode', { code: code }, function(response) {
+                    $('#btn_youtube_submit_code').removeClass('disabled');
+                    $('#youtube_auth_code').prop('disabled', false);
+                    
+                    if (response && response.success) {
+                        M.toast({html: '✓ YouTube Premium connected successfully!'});
+                        $('#youtube_auth_code').val('');
+                        $('#youtube_safe_mode_input').removeClass('visible');
+                        checkYouTubeTokenStatus();
+                    } else {
+                        var error = response && response.error ? response.error : 'Unknown error';
+                        M.toast({html: '✗ Failed: ' + error});
+                    }
+                });
+            });
+            
+            // Clear YouTube tokens button
+            $('#btn_youtube_clear').on('click', function() {
+                if (!confirm('Are you sure you want to clear YouTube Premium authentication?')) {
+                    return;
+                }
+                
+                sendTo(target, 'clearYouTubeTokens', {}, function(response) {
+                    if (response && response.success) {
+                        M.toast({html: 'YouTube tokens cleared'});
+                        checkYouTubeTokenStatus();
+                    }
+                });
+            });
+        }
+        
+        function checkYouTubeTokenStatus() {
+            var target = adapter + '.' + instance;
+            
+            sendTo(target, 'getYouTubeTokenStatus', {}, function(response) {
+                var $status = $('#youtube_status');
+                var $statusText = $('#youtube_status_text');
+                var $statusIcon = $('#youtube_status_icon');
+                
+                if (response && response.success && response.status) {
+                    var status = response.status;
+                    
+                    if (status.connected) {
+                        $status.removeClass('disconnected').addClass('connected');
+                        $statusIcon.text('✓');
+                        
+                        var text = 'Connected';
+                        if (status.expiryDate) {
+                            var expiry = new Date(status.expiryDate);
+                            if (status.isExpired) {
+                                text += ' (Token expired - will refresh on next use)';
+                            } else {
+                                text += ' (Expires: ' + expiry.toLocaleString() + ')';
+                            }
+                        }
+                        $statusText.text(text);
+                    } else {
+                        $status.removeClass('connected').addClass('disconnected');
+                        $statusIcon.text('⚪');
+                        $statusText.text('Not connected');
+                    }
+                } else {
+                    $status.removeClass('connected').addClass('disconnected');
+                    $statusIcon.text('⚪');
+                    $statusText.text('Not connected');
+                }
+            });
         }
 
         // Added onChange parameter
@@ -202,12 +344,86 @@
     </script>
     
     <style>
-        .auth-link-box { 
+        .auth-link-box {
             background-color: #1565c0 !important; color: #ffffff !important;
             padding: 15px; border-radius: 4px; margin-top: 10px; text-align: center;
         }
         .auth-link-box a {
             color: #ffca28 !important; font-size: 1.3em; font-weight: bold; text-decoration: underline; display: block; margin-top: 5px;
+        }
+        /* YouTube Premium Auth Styles */
+        .youtube-auth-section {
+            background-color: #f5f5f5;
+            border: 1px solid #e0e0e0;
+            border-radius: 8px;
+            padding: 20px;
+            margin-top: 10px;
+        }
+        .youtube-status {
+            padding: 10px 15px;
+            border-radius: 4px;
+            margin-bottom: 15px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        .youtube-status.connected {
+            background-color: #e8f5e9;
+            border: 1px solid #4caf50;
+            color: #2e7d32;
+        }
+        .youtube-status.disconnected {
+            background-color: #fff3e0;
+            border: 1px solid #ff9800;
+            color: #e65100;
+        }
+        .youtube-status-icon {
+            font-size: 1.5em;
+        }
+        .auth-mode-container {
+            margin: 15px 0;
+            padding: 15px;
+            background-color: #fff;
+            border-radius: 4px;
+        }
+        .auth-mode-option {
+            padding: 10px 0;
+            border-bottom: 1px solid #eee;
+        }
+        .auth-mode-option:last-child {
+            border-bottom: none;
+        }
+        .auth-mode-option label {
+            display: flex;
+            align-items: flex-start;
+            cursor: pointer;
+        }
+        .auth-mode-option .mode-info {
+            margin-left: 10px;
+        }
+        .auth-mode-option .mode-title {
+            font-weight: bold;
+            color: #333;
+        }
+        .auth-mode-option .mode-desc {
+            font-size: 0.85em;
+            color: #666;
+            margin-top: 3px;
+        }
+        .auth-mode-option .mode-warning {
+            font-size: 0.8em;
+            color: #ff9800;
+            margin-top: 3px;
+        }
+        .safe-mode-input {
+            margin-top: 15px;
+            padding: 15px;
+            background-color: #e3f2fd;
+            border-radius: 4px;
+            display: none;
+        }
+        .safe-mode-input.visible {
+            display: block;
         }
     </style>
 </head>
@@ -318,6 +534,67 @@
             <div class="row">
                 <div class="col s4" style="margin-top: 20px;">
                     <a class="waves-effect waves-light btn blue" id="btn_scan">Scan Devices Now</a>
+                </div>
+            </div>
+        </div>
+
+        <!-- YouTube Premium Authentication Section -->
+        <div class="row cast-only" style="display:none; padding: 10px;">
+            <div class="col s12">
+                <h5>🎵 YouTube Premium Authentication</h5>
+                <div class="youtube-auth-section">
+                    <!-- Status Display -->
+                    <div id="youtube_status" class="youtube-status disconnected">
+                        <span id="youtube_status_icon" class="youtube-status-icon">⚪</span>
+                        <span id="youtube_status_text">Not connected</span>
+                    </div>
+                    
+                    <!-- Authentication Mode Selection -->
+                    <div class="auth-mode-container">
+                        <p style="margin-bottom: 15px; font-weight: bold;">Select authentication method:</p>
+                        
+                        <div class="auth-mode-option">
+                            <label>
+                                <input type="radio" name="youtubeAuthMode" value="automatic" checked />
+                                <span class="mode-info">
+                                    <span class="mode-title">Automatic (recommended if accessing ioBroker locally)</span>
+                                    <div class="mode-desc">Opens authorization in popup. Code is captured automatically.</div>
+                                    <div class="mode-warning">⚠️ Only works when accessing ioBroker from the same machine (localhost).</div>
+                                </span>
+                            </label>
+                        </div>
+                        
+                        <div class="auth-mode-option">
+                            <label>
+                                <input type="radio" name="youtubeAuthMode" value="safe" />
+                                <span class="mode-info">
+                                    <span class="mode-title">Safe Mode (works from any location)</span>
+                                    <div class="mode-desc">Opens authorization in new tab. You'll need to copy the code shown by Google and paste it below.</div>
+                                </span>
+                            </label>
+                        </div>
+                    </div>
+                    
+                    <!-- Authorize Button -->
+                    <div style="margin-top: 15px;">
+                        <a class="waves-effect waves-light btn red" id="btn_youtube_auth">
+                            Authorize YouTube Premium
+                        </a>
+                        <a class="waves-effect waves-light btn grey" id="btn_youtube_clear" style="margin-left: 10px;">
+                            Clear Tokens
+                        </a>
+                    </div>
+                    
+                    <!-- Safe Mode: Code Input -->
+                    <div id="youtube_safe_mode_input" class="safe-mode-input">
+                        <p style="margin-bottom: 10px;"><strong>Safe Mode:</strong> Paste the authorization code from Google below:</p>
+                        <div class="input-field" style="margin: 0;">
+                            <input type="text" id="youtube_auth_code" placeholder="Paste authorization code here..." />
+                        </div>
+                        <a class="waves-effect waves-light btn green" id="btn_youtube_submit_code" style="margin-top: 10px;">
+                            Submit Code
+                        </a>
+                    </div>
                 </div>
             </div>
         </div>

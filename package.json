@@ -1,6 +1,6 @@
 {
   "name": "iobroker.googlebroadcast",
-  "version": "0.6.2",
+  "version": "0.7.0",
   "description": "Broadcasts text messages via Google Assistant SDK or Chromecast",
   "author": "User",
   "license": "MIT",
@@ -13,6 +13,7 @@
   "dependencies": {
     "@iobroker/adapter-core": "^3.2.3",
     "google-assistant": "^0.7.0",
+    "google-auth-library": "^9.0.0",
     "googleapis": "^144.0.0",
     "multicast-dns": "^7.2.5",
     "castv2-client": "^1.2.0",

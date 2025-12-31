@@ -1,8 +1,11 @@
 {
   "common": {
     "name": "googlebroadcast",
-    "version": "0.6.2",
+    "version": "0.7.0",
     "news": {
+      "0.7.0": {
+        "en": "Added YouTube Premium OAuth authentication in admin UI with automatic and safe mode support"
+      },
       "0.6.2": {
         "en": "Added model-name and mdns-id states for better device identification"
       },
