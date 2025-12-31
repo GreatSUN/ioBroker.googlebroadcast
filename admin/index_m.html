@@ -171,15 +171,9 @@
                     // YouTube scope
                     var scope = encodeURIComponent('https://www.googleapis.com/auth/youtube');
                     
-                    // Always use adapter's webserver for OAuth callback (OOB is deprecated by Google)
-                    var ip = adapterWebServerIp || 'localhost';
-                    var port = adapterWebServerPort || 8091;
-                    var redirectUri = encodeURIComponent('http://' + ip + ':' + port + '/oauth/youtube');
-                    console.log('GoogleBroadcast: YouTube OAuth redirect URI:', 'http://' + ip + ':' + port + '/oauth/youtube');
-                    
-                    // Generate unique device_id based on adapter instance
-                    var deviceId = 'iobroker-googlebroadcast-' + instance;
-                    var deviceName = 'ioBroker GoogleBroadcast';
+                    // Use OOB redirect for copy/paste flow (interactive exchange)
+                    // This is more reliable than localhost callback
+                    var redirectUri = encodeURIComponent('urn:ietf:wg:oauth:2.0:oob');
                     
                     var url = 'https://accounts.google.com/o/oauth2/v2/auth' +
                         '?access_type=offline' +
@@ -187,9 +181,7 @@
                         '&prompt=consent' +
                         '&response_type=code' +
                         '&client_id=' + keys.client_id +
-                        '&redirect_uri=' + redirectUri +
-                        '&device_id=' + encodeURIComponent(deviceId) +
-                        '&device_name=' + encodeURIComponent(deviceName);
+                        '&redirect_uri=' + redirectUri;
                     
                     $btn.attr('href', url).removeClass('disabled');
                 } catch(e) {
@@ -216,7 +208,9 @@
                     return false;
                 }
                 
-                M.toast({html: 'Opening Google authorization. Complete it and return here to refresh status.'});
+                // Show the code input field
+                $('#youtube_code_input').show();
+                M.toast({html: 'Copy the code from Google and paste it below, then click Exchange Code.'});
                 // Let the link open naturally (don't prevent default)
             });
             
@@ -224,6 +218,38 @@
             $('#btn_youtube_refresh').on('click', function() {
                 checkYouTubeTokenStatus();
                 M.toast({html: 'Checking YouTube token status...'});
+            });
+            
+            // Exchange Code button handler - immediate exchange, no save needed
+            $('#btn_youtube_exchange').on('click', function() {
+                var code = $('#youtube_auth_code').val().trim();
+                if (!code) {
+                    M.toast({html: '✗ Please enter the authorization code'});
+                    return;
+                }
+                
+                $(this).addClass('disabled').text('Exchanging...');
+                $('#youtube_auth_code').prop('disabled', true);
+                
+                console.log('GoogleBroadcast: Exchanging YouTube auth code:', code.substring(0, 10) + '...');
+                
+                sendTo(target, 'exchangeYouTubeCode', { code: code }, function(response) {
+                    $('#btn_youtube_exchange').removeClass('disabled').text('Exchange Code');
+                    $('#youtube_auth_code').prop('disabled', false);
+                    
+                    console.log('GoogleBroadcast: Exchange response:', response);
+                    
+                    if (response && response.success) {
+                        M.toast({html: '✓ YouTube Premium connected successfully!'});
+                        $('#youtube_auth_code').val('');
+                        $('#youtube_code_input').hide();
+                        checkYouTubeTokenStatus();
+                    } else {
+                        var error = response && response.error ? response.error : 'Unknown error';
+                        console.error('GoogleBroadcast: Exchange failed:', error);
+                        M.toast({html: '✗ Failed: ' + error});
+                    }
+                });
             });
             
             // Clear YouTube tokens button
@@ -496,10 +522,9 @@
                     <ol>
                         <li>Click "Authorize YouTube Premium" button below</li>
                         <li>Complete the Google authorization in the new tab</li>
-                        <li>You will be redirected to the adapter's webserver which will capture the tokens automatically</li>
-                        <li>Return here and click "Refresh Status" to verify connection</li>
+                        <li>Google will show you an authorization code - copy it</li>
+                        <li>Paste the code in the field below and click "Exchange Code"</li>
                     </ol>
-                    <p><em>Note: This requires the adapter to be running and accessible at http://[your-ip]:8091</em></p>
                 </div>
                 
                 <!-- Authorize Button -->
@@ -507,6 +532,15 @@
                     <a class="waves-effect waves-light btn red disabled" id="btn_youtube_auth" href="#" target="_blank">Authorize YouTube Premium</a>
                     <a class="waves-effect waves-light btn blue" id="btn_youtube_refresh" style="margin-left: 10px;">Refresh Status</a>
                     <a class="waves-effect waves-light btn grey" id="btn_youtube_clear" style="margin-left: 10px;">Clear Tokens</a>
+                </div>
+                
+                <!-- Code Input (interactive exchange) -->
+                <div id="youtube_code_input" class="col s12" style="margin-top: 15px; display: none;">
+                    <div class="input-field">
+                        <input type="text" id="youtube_auth_code" />
+                        <label for="youtube_auth_code">Paste the authorization code from Google here</label>
+                    </div>
+                    <a class="waves-effect waves-light btn green" id="btn_youtube_exchange">Exchange Code</a>
                 </div>
             </div>
         </div>
