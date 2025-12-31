@@ -177,13 +177,19 @@
                     var redirectUri = encodeURIComponent('http://' + ip + ':' + port + '/oauth/youtube');
                     console.log('GoogleBroadcast: YouTube OAuth redirect URI:', 'http://' + ip + ':' + port + '/oauth/youtube');
                     
+                    // Generate unique device_id based on adapter instance
+                    var deviceId = 'iobroker-googlebroadcast-' + instance;
+                    var deviceName = 'ioBroker GoogleBroadcast';
+                    
                     var url = 'https://accounts.google.com/o/oauth2/v2/auth' +
                         '?access_type=offline' +
                         '&scope=' + scope +
                         '&prompt=consent' +
                         '&response_type=code' +
                         '&client_id=' + keys.client_id +
-                        '&redirect_uri=' + redirectUri;
+                        '&redirect_uri=' + redirectUri +
+                        '&device_id=' + encodeURIComponent(deviceId) +
+                        '&device_name=' + encodeURIComponent(deviceName);
                     
                     $btn.attr('href', url).removeClass('disabled');
                 } catch(e) {

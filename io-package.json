@@ -1,8 +1,11 @@
 {
   "common": {
     "name": "googlebroadcast",
-    "version": "0.7.7",
+    "version": "0.7.8",
     "news": {
+      "0.7.8": {
+        "en": "Added device_id and device_name parameters for private IP OAuth redirects"
+      },
       "0.7.7": {
         "en": "Removed deprecated OOB OAuth, now uses localhost callback (Google deprecated OOB in 2022)"
       },
