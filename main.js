@@ -25,21 +25,26 @@ class GoogleBroadcast extends utils.Adapter {
         this.mdns = null;
         this.scanInterval = null;
         
-        this.credsPath = null;
-        this.tokensPath = null;
+        // Explizit initialisieren
+        this.credsPath = '';
+        this.tokensPath = '';
         
         this.server = null;
         this.serverPort = 8091;
         this.localIp = '';
         
         this.audioBuffers = new Map();
-        
         this.devicesByIp = new Map();
     }
 
     async onReady() {
-        this.credsPath = path.join(os.tmpdir(), `iobroker_google_${this.namespace}_creds.json`);
-        this.tokensPath = path.join(os.tmpdir(), `iobroker_google_${this.namespace}_tokens.json`);
+        // 1. Pfade definieren (Absolut sicherstellen, dass sie Strings sind)
+        const tmpDir = os.tmpdir();
+        this.credsPath = path.join(tmpDir, `iobroker_google_${this.namespace}_creds.json`);
+        this.tokensPath = path.join(tmpDir, `iobroker_google_${this.namespace}_tokens.json`);
+        
+        this.log.debug(`[INIT] Paths defined: Creds="${this.credsPath}", Tokens="${this.tokensPath}"`);
+
         this.serverPort = this.config.webServerPort || 8091;
 
         if (this.config.manualIp) {
@@ -50,7 +55,7 @@ class GoogleBroadcast extends utils.Adapter {
 
         this.startWebServer();
         
-        // Assistant initialisieren
+        // 2. Assistant starten
         await this.initGoogleAssistant();
 
         this.initMdns();
@@ -64,7 +69,7 @@ class GoogleBroadcast extends utils.Adapter {
         this.subscribeStates('devices.*.broadcast');
         this.subscribeStates('devices.*.volume');
         this.subscribeStates('devices.*.youtube-url');
-        this.subscribeStates('devices.*.youtube-index'); // Neuer State
+        this.subscribeStates('devices.*.youtube-index');
     }
 
     findLocalIp() {
@@ -100,36 +105,51 @@ class GoogleBroadcast extends utils.Adapter {
             const credentialsJson = this.config.jsonCredentials;
             const tokenState = await this.getStateAsync('tokens');
             
-            // Fix: Check paths before use
-            if (!this.credsPath || !this.tokensPath) {
-                this.log.error('Internal Error: Credentials paths not initialized.');
+            // Lokale Referenzen sichern
+            const cPath = this.credsPath;
+            const tPath = this.tokensPath;
+            
+            if (!cPath || !tPath) {
+                this.log.error(`[INIT] Critical: Paths are empty! cPath="${cPath}"`);
                 return;
             }
-            
-            // Auto-Exchange Logik für Tokens, falls User Code in 'tokens' state geschrieben hat
+
             let tokensJson = null;
             if (tokenState && tokenState.val && !tokenState.val.includes('{')) {
-                // Sieht aus wie ein Auth-Code
-                this.log.info('Auth code detected in tokens state. Please use external tool to generate tokens if this fails.');
+                this.log.info('Auth code detected in tokens state.');
             } else if (tokenState) {
                 tokensJson = tokenState.val;
             }
 
             if (credentialsJson && tokensJson) {
-                fs.writeFileSync(this.credsPath, credentialsJson);
-                fs.writeFileSync(this.tokensPath, tokensJson);
+                // Synchrones Schreiben um Race-Conditions auszuschließen
+                try {
+                    fs.writeFileSync(cPath, credentialsJson);
+                    fs.writeFileSync(tPath, tokensJson);
+                    this.log.debug('[INIT] Files written to disk');
+                } catch (err) {
+                    this.log.error(`[INIT] File Write Error: ${err.message}`);
+                    return;
+                }
                 
-                const config = {
+                // --- DEBUG & FIX: Config Objekt ---
+                const assistantConfig = {
                     auth: {
-                        keyFilePath: this.credsPath,
-                        savedTokensPath: this.tokensPath,
+                        keyFilePath: cPath,      // Standard
+                        savedTokensPath: tPath,
                     },
                     conversation: {
                         lang: this.config.language || 'de-DE', 
                     },
+                    // FALLBACK: Wir fügen die Keys auch auf Root-Ebene hinzu, falls die Library spinnt
+                    keyFilePath: cPath, 
+                    savedTokensPath: tPath
                 };
                 
-                this.assistant = new GoogleAssistant(config);
+                // Loggen, was wir übergeben (Passwörter maskiert man hier normalerweise, aber Pfade sind ok)
+                this.log.debug(`[INIT] Initializing Assistant with Config: ${JSON.stringify(assistantConfig)}`);
+
+                this.assistant = new GoogleAssistant(assistantConfig);
                 
                 this.assistant.on('ready', () => {
                     this.assistantReady = true;
@@ -138,22 +158,25 @@ class GoogleBroadcast extends utils.Adapter {
                 });
                 
                 this.assistant.on('error', (err) => {
+                    if (err && err.toString().includes('EOF')) return;
                     this.log.error(`Assistant Error: ${err}`);
                 });
             } else {
-                this.log.warn('Assistant Credentials missing.');
+                this.log.warn(`Assistant Credentials missing. JSON present: ${!!credentialsJson}, Tokens present: ${!!tokensJson}`);
             }
-        } catch (e) { this.log.error(`Assistant Init Error: ${e.message}`); }
+        } catch (e) { 
+            this.log.error(`Assistant Init Crash: ${e.message}`); 
+            if (e.stack) this.log.debug(e.stack);
+        }
     }
 
     async triggerAssistantCommand(deviceId, deviceName, command) {
         if (!this.assistant || !this.assistantReady) {
-            // Versuch eines Re-Init, falls nicht bereit
+            this.log.warn('[ASSISTANT] Not ready yet. Re-initializing...');
             await this.initGoogleAssistant();
             if (!this.assistantReady) return;
         }
 
-        // Command für spezifisches Gerät anpassen
         const finalCommand = `${command} auf ${deviceName}`;
         this.log.info(`[ASSISTANT] Sending: "${finalCommand}"`);
 
@@ -164,20 +187,14 @@ class GoogleBroadcast extends utils.Adapter {
                 .on('audio-data', () => {})
                 .on('response', (text) => { if (text) this.log.debug(`[ASSISTANT] Response: ${text}`); })
                 .on('ended', (error) => {
-                    if (error) this.log.error(`Assistant Error: ${error}`);
+                    if (error) this.log.warn(`Assistant Command Error: ${error}`);
                 });
         });
     }
 
-    /**
-     * Holt den Titel via YouTube oEmbed API (kein Login/Parser nötig!)
-     */
     async getPlaylistTitle(url) {
         try {
-            // Wir nutzen die offizielle oEmbed Schnittstelle von YouTube.
-            // Die liefert JSON Daten für jede öffentliche URL.
             const oembedUrl = `https://www.youtube.com/oembed?url=${encodeURIComponent(url)}&format=json`;
-            
             this.log.debug(`[METADATA] Fetching oEmbed info for: ${url}`);
             const response = await axios.get(oembedUrl, { timeout: 3000 });
             
@@ -191,7 +208,6 @@ class GoogleBroadcast extends utils.Adapter {
         }
     }
 
-    // --- mDNS & Device Management ---
     initMdns() {
         this.mdns = mDNS();
         this.mdns.on('response', (res) => this.processMdnsResponse(res));
@@ -231,14 +247,12 @@ class GoogleBroadcast extends utils.Adapter {
         
         await this.setObjectNotExistsAsync(`${folder}.${cleanId}.broadcast`, { type: 'state', common: { name: 'Broadcast', type: 'string', role: 'text', read: true, write: true } });
 
-        // URL (Input)
         await this.setObjectNotExistsAsync(`${folder}.${cleanId}.youtube-url`, { 
             type: 'state', 
             common: { name: 'YouTube URL', type: 'string', role: 'media.url', read: true, write: true, ack: true } 
         });
         this.subscribeStates(`${folder}.${cleanId}.youtube-url`);
 
-        // Index (Input)
         await this.setObjectNotExistsAsync(`${folder}.${cleanId}.youtube-index`, { 
             type: 'state', 
             common: { name: 'Playlist Index', type: 'number', role: 'value', read: true, write: true, def: 1 } 
@@ -281,42 +295,30 @@ class GoogleBroadcast extends utils.Adapter {
                 if (obj) this.castTTS(deviceId, obj.native.ip, state.val, null, null, obj.native.port);
                 this.setState(id, null, true);
             } 
-            
-            // --- DIE NEUE PLAYLIST LOGIK ---
             else if (id.includes('.youtube-url')) {
                 const { deviceId, obj, folder } = await getDevInfo();
                 if (obj && obj.common && obj.common.name) {
                     const friendlyName = obj.common.name;
                     const url = state.val;
                     
-                    // 1. Titel der Playlist/des Videos holen
                     const title = await this.getPlaylistTitle(url);
-                    const playCommand = title ? `Spiele ${title}` : `Spiele ${url}`; // Fallback auf URL Text
+                    const playCommand = title ? `Spiele ${title}` : `Spiele ${url}`;
                     
-                    this.log.info(`[FLOW] Starting playback: "${playCommand}" on ${friendlyName}`);
+                    this.log.info(`[FLOW] Identified Title: "${title || 'Unknown'}" -> Command: "${playCommand}"`);
                     
-                    // 2. Starten
                     await this.triggerAssistantCommand(deviceId, friendlyName, playCommand);
                     
-                    // 3. Check Index
                     const indexState = await this.getStateAsync(`${folder}.${deviceId}.youtube-index`);
                     const index = (indexState && indexState.val) ? indexState.val : 1;
                     
                     if (index > 1) {
-                        this.log.info(`[FLOW] Index is ${index}. Waiting 7s for playback to start, then skipping...`);
-                        
-                        // Warten, bis Musik läuft (Dirty Timeout, aber ohne 2-Way-Comm notwendig)
+                        this.log.info(`[FLOW] Skipping to index ${index} in 7 seconds...`);
                         setTimeout(async () => {
-                            // Versuch 1: Direkter Sprung (funktioniert bei manchen Providern)
-                            const skipCommand = `Springe zu Titel ${index}`; // oder "Spiele Titel Nummer X"
+                            const skipCommand = `Springe zu Titel ${index}`;
                             await this.triggerAssistantCommand(deviceId, friendlyName, skipCommand);
-                            
-                            // Falls du DOCH die Loop-Methode willst, müsstest du hier eine Schleife bauen.
-                            // Aber ich rate dringend zu "Springe zu".
                         }, 7000); 
                     }
                     
-                    // 4. Acknowledge setzen (Wir haben den Befehl verarbeitet)
                     this.setState(id, state.val, true);
                 }
             }

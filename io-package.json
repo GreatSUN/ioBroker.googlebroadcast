@@ -1,9 +1,13 @@
 {
   "common": {
     "name": "googlebroadcast",
-    "version": "0.8.2",
+    "version": "0.8.3",
     "messagebox": true,
     "news": {
+      "0.8.3": {
+        "en": "Fixed: Broken config for GoogleAssistant initialization",
+        "de": "Repariert: Kaputte Konfiguration für die GoogleAssistant Initialisierung"
+      },
       "0.8.2": {
         "en": "Fixed YouTube metadata extraction using oEmbed (removed play-dl dependency) and fixed Assistant Init path error",
         "de": "YouTube-Metadatenabruf mittels oEmbed repariert (play-dl Abhängigkeit entfernt) und Assistant Init Pfad-Fehler behoben"
