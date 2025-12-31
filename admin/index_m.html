@@ -223,7 +223,6 @@
             var target = adapter + '.' + instance;
             
             sendTo(target, 'getYouTubeTokenStatus', {}, function(response) {
-                var $status = $('#youtube_status');
                 var $statusText = $('#youtube_status_text');
                 var $statusIcon = $('#youtube_status_icon');
                 
@@ -231,8 +230,7 @@
                     var status = response.status;
                     
                     if (status.connected) {
-                        $status.removeClass('amber lighten-4').addClass('green lighten-4');
-                        $statusIcon.text('✓');
+                        $statusIcon.text('✓').css('color', '#4caf50');
                         
                         var text = 'Connected';
                         if (status.expiryDate) {
@@ -245,13 +243,11 @@
                         }
                         $statusText.text(text);
                     } else {
-                        $status.removeClass('green lighten-4').addClass('amber lighten-4');
-                        $statusIcon.text('⚪');
+                        $statusIcon.text('⚪').css('color', '');
                         $statusText.text('Not connected');
                     }
                 } else {
-                    $status.removeClass('green lighten-4').addClass('amber lighten-4');
-                    $statusIcon.text('⚪');
+                    $statusIcon.text('⚪').css('color', '');
                     $statusText.text('Not connected');
                 }
             });
@@ -466,10 +462,10 @@
                 
                 <!-- Status Display -->
                 <div class="col s12">
-                    <div id="youtube_status" class="card-panel amber lighten-4">
+                    <p id="youtube_status">
                         <span id="youtube_status_icon">⚪</span>
                         <span id="youtube_status_text">Not connected</span>
-                    </div>
+                    </p>
                 </div>
                 
                 <!-- Authentication Mode Selection -->

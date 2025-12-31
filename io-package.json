@@ -1,8 +1,11 @@
 {
   "common": {
     "name": "googlebroadcast",
-    "version": "0.7.1",
+    "version": "0.7.2",
     "news": {
+      "0.7.2": {
+        "en": "Fixed YouTube auth status display for dark mode"
+      },
       "0.7.1": {
         "en": "Removed custom CSS, using default ioBroker/Materialize styles"
       },
