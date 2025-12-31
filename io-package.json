@@ -1,8 +1,12 @@
 {
   "common": {
     "name": "googlebroadcast",
-    "version": "0.7.9",
+    "version": "0.7.10",
+    "messagebox": true,
     "news": {
+      "0.7.10": {
+        "en": "Fixed: added missing messagebox key with value true, added removing of old auth codes (useless anyways)"
+      },
       "0.7.9": {
         "en": "Fixed YouTube OAuth: interactive code exchange with OOB redirect, immediate token exchange"
       },

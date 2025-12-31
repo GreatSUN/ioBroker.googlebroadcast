@@ -68,22 +68,18 @@ class GoogleBroadcast extends utils.Adapter {
 
         this.startWebServer();
 
+        // Initialize Google Assistant or Cast Mode first
         if (this.config.broadcastMode === 'cast') {
             this.log.info('Mode: Chromecast TTS (Cast)');
             this.setState('info.connection', true, true);
-            
-            // Process YouTube auth code if provided in config
-            await this.processYouTubeAuthCode();
-            
-            await this.initPlayDl();
         } else {
             await this.initGoogleAssistant();
-            
-            // Process YouTube auth code if provided in config
-            await this.processYouTubeAuthCode();
-            
-            await this.initPlayDl();
         }
+
+        // IMPORTANT: Process YouTube Auth Code AFTER basic initialization
+        // This prevents the adapter from crashing too early if auth fails
+        await this.processYouTubeAuthCode();
+        await this.initPlayDl();
 
         this.initMdns();
         const intervalMinutes = this.config.scanInterval || 30;
@@ -253,7 +249,7 @@ class GoogleBroadcast extends utils.Adapter {
     }
 
     /**
-     * Exchange YouTube authorization code for tokens
+     * Exchange YouTube authorization code for tokens (Automatic Mode)
      * @param {string} code - Authorization code from Google OAuth
      * @returns {object|null} - Token object or null on failure
      */
@@ -372,21 +368,16 @@ class GoogleBroadcast extends utils.Adapter {
                 return;
             }
             
-            const playDlToken = {
-                access_token: tokens.access_token,
-                refresh_token: tokens.refresh_token,
-                token_type: tokens.token_type || 'Bearer',
-                expiry_date: tokens.expiry_date
-            };
-            
+            // Note: In newer play-dl versions, you may need to use playDl.authorization() instead of setToken() for OAuth
+            // But preserving your existing logic structure here:
             await playDl.setToken({
                 youtube: {
-                    cookie: ''
+                    access_token: tokens.access_token,
+                    refresh_token: tokens.refresh_token,
+                    token_type: tokens.token_type || 'Bearer',
+                    expiry_date: tokens.expiry_date
                 }
             });
-            
-            this.youtubeTokens = playDlToken;
-            this.youtubeCredentials = creds;
             
             this.log.info('[YOUTUBE] play-dl configured with OAuth tokens');
         } catch (e) {
@@ -413,19 +404,16 @@ class GoogleBroadcast extends utils.Adapter {
             
             // Check if we already have tokens
             const tokenState = await this.getStateAsync('youtube_oauth_tokens');
-            this.log.debug(`[YOUTUBE-AUTH] Token state: ${tokenState ? JSON.stringify(tokenState.val).substring(0, 100) : 'null'}`);
-            
             if (tokenState && tokenState.val && tokenState.val !== '') {
                 try {
                     const existingTokens = JSON.parse(tokenState.val);
                     if (existingTokens.access_token) {
-                        this.log.info('[YOUTUBE-AUTH] Tokens already exist, skipping code exchange. Clear tokens first to re-authenticate.');
-                        // Clear the auth code from config since we already have tokens
+                        this.log.info('[YOUTUBE-AUTH] Tokens already exist. Clearing auth code from config to avoid re-use.');
                         await this.clearYouTubeAuthCodeFromConfig();
                         return;
                     }
                 } catch (e) {
-                    this.log.warn(`[YOUTUBE-AUTH] Invalid token JSON, proceeding with exchange: ${e.message}`);
+                    this.log.warn(`[YOUTUBE-AUTH] Invalid token JSON: ${e.message}`);
                 }
             }
             
@@ -434,15 +422,28 @@ class GoogleBroadcast extends utils.Adapter {
             const tokens = await this.exchangeYouTubeCodeSafeMode(authCode.trim());
             
             if (tokens) {
-                this.log.info(`[YOUTUBE-AUTH] Successfully exchanged auth code for tokens! access_token: ${tokens.access_token ? 'present' : 'missing'}, refresh_token: ${tokens.refresh_token ? 'present' : 'missing'}`);
-                // Clear the auth code from config
+                this.log.info(`[YOUTUBE-AUTH] Successfully exchanged auth code for tokens!`);
                 await this.clearYouTubeAuthCodeFromConfig();
             } else {
                 this.log.error('[YOUTUBE-AUTH] Failed to exchange auth code - no tokens returned');
+                // Optional: Clear invalid code here too? Usually better to catch in the block below.
             }
         } catch (e) {
             this.log.error(`[YOUTUBE-AUTH] Error processing auth code: ${e.message}`);
             this.log.error(`[YOUTUBE-AUTH] Stack: ${e.stack}`);
+            
+            // === BUG FIX: PREVENT RESTART LOOP ===
+            // If the code is invalid or expired, we MUST clear it from the config,
+            // otherwise the adapter will restart and try again forever.
+            if (e.message && (
+                e.message.includes('invalid_grant') || 
+                e.message.includes('invalid_request') || 
+                e.message.includes('Bad Request') ||
+                e.message.includes('invalid_client')
+            )) {
+                this.log.warn('[YOUTUBE-AUTH] The provided auth code is invalid or expired. Clearing it from configuration to prevent boot-loop.');
+                await this.clearYouTubeAuthCodeFromConfig();
+            }
         }
     }
 
@@ -454,6 +455,8 @@ class GoogleBroadcast extends utils.Adapter {
             // Get current config object
             const obj = await this.getForeignObjectAsync(`system.adapter.${this.namespace}`);
             if (obj && obj.native) {
+                if (obj.native.youtubeAuthCode === '') return; // Already cleared
+                
                 obj.native.youtubeAuthCode = '';
                 await this.setForeignObjectAsync(`system.adapter.${this.namespace}`, obj);
                 this.log.info('[YOUTUBE-AUTH] Cleared auth code from config');
@@ -486,9 +489,12 @@ class GoogleBroadcast extends utils.Adapter {
             
             this.log.info('[YOUTUBE-AUTH] Token refreshed successfully');
             
-            await this.setStateAsync('youtube_oauth_tokens', JSON.stringify(credentials), true);
+            // Merge new credentials with old ones (to keep refresh_token if not returned)
+            const newTokens = { ...tokens, ...credentials };
             
-            return credentials;
+            await this.setStateAsync('youtube_oauth_tokens', JSON.stringify(newTokens), true);
+            
+            return newTokens;
         } catch (e) {
             this.log.error(`[YOUTUBE-AUTH] Token refresh error: ${e.message}`);
             return null;
