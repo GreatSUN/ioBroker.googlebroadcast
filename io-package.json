@@ -1,9 +1,13 @@
 {
   "common": {
     "name": "googlebroadcast",
-    "version": "0.8.0",
+    "version": "0.8.1",
     "messagebox": true,
     "news": {
+      "0.8.1": {
+        "en": "Re-Added accidently removed admin UI parts",
+        "de": "Versehentlich gelöschte Bereiche im Admin-UI wieder hinzugefügt"
+      },
       "0.8.0": {
         "en": "Major Refactoring: Switch from direct streaming (play-dl) to Google Assistant Commands for music to avoid cookie issues. Added playlist index support.",
         "de": "Großes Refactoring: Wechsel von Direkt-Streaming (play-dl) zu Google Assistant Befehlen für Musik, um Cookie-Probleme zu umgehen. Playlist-Index Unterstützung hinzugefügt."

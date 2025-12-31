@@ -22,7 +22,7 @@
                 }
             });
             
-            // Generate Auth Link Logic
+            // Auth Link Logic
             $('#btn_generate_link').on('click', function() {
                 var json = $('#jsonCredentials').val();
                 if(!json) { alert('Please paste credentials.json first'); return; }
@@ -40,6 +40,13 @@
                     $('#auth_link_container').show();
                     $('#auth_step_2').show();
                 } catch(e) { alert('Error: ' + e); }
+            });
+
+            // Scan Button Logic
+            $('#btn_scan').on('click', function() {
+                sendTo(null, 'scan', null, function(res) {
+                    if(M) M.toast({html: 'Scan started in background'});
+                });
             });
             
             onChange(false);
@@ -102,12 +109,21 @@
         
         <div class="row">
             <div class="col s12">
-                <h5>Discovery</h5>
+                <h5>Discovery & Polling</h5>
                 <div class="col s4">
                     <div class="input-field">
                         <input type="number" id="scanInterval" class="value" />
-                        <label for="scanInterval">Scan Interval (min)</label>
+                        <label for="scanInterval">mDNS Scan Interval (min)</label>
                     </div>
+                </div>
+                <div class="col s4">
+                    <div class="input-field">
+                        <input type="number" id="pollInterval" class="value" />
+                        <label for="pollInterval">Volume Poll Interval (sec)</label>
+                    </div>
+                </div>
+                <div class="col s4" style="padding-top: 20px;">
+                     <a class="waves-effect waves-light btn" id="btn_scan"><i class="material-icons left">search</i>Scan Now</a>
                 </div>
             </div>
         </div>

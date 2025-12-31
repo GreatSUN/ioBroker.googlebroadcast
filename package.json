@@ -1,6 +1,6 @@
 {
   "name": "iobroker.googlebroadcast",
-  "version": "0.8.0",
+  "version": "0.8.1",
   "description": "Broadcasts text messages via Google Assistant SDK or Chromecast",
   "author": "User",
   "license": "MIT",
