@@ -1,9 +1,13 @@
 {
   "common": {
     "name": "googlebroadcast",
-    "version": "0.8.3",
+    "version": "0.8.4",
     "messagebox": true,
     "news": {
+      "0.8.4": {
+        "en": "Fixed/re-added missing input field for code (inacceptable change to enforce user to put it into an adapter state)",
+        "de": "Repariert/wieder hinzugefügt: Fehlendes Eingabefeld für den Code (es war nicht sinnvoll den user den Code in einen Adapter State einfügen zu lassen)"
+      },
       "0.8.3": {
         "en": "Fixed: Broken config for GoogleAssistant initialization",
         "de": "Repariert: Kaputte Konfiguration für die GoogleAssistant Initialisierung"

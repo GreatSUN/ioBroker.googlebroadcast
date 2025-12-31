@@ -2,6 +2,7 @@
 
 const utils = require('@iobroker/adapter-core');
 const GoogleAssistant = require('google-assistant');
+const { OAuth2Client } = require('google-auth-library');
 const mDNS = require('multicast-dns');
 const Client = require('castv2-client').Client;
 const DefaultMediaReceiver = require('castv2-client').DefaultMediaReceiver;
@@ -25,7 +26,6 @@ class GoogleBroadcast extends utils.Adapter {
         this.mdns = null;
         this.scanInterval = null;
         
-        // Explizit initialisieren
         this.credsPath = '';
         this.tokensPath = '';
         
@@ -34,17 +34,31 @@ class GoogleBroadcast extends utils.Adapter {
         this.localIp = '';
         
         this.audioBuffers = new Map();
+        this.commandLocks = new Map(); 
         this.devicesByIp = new Map();
     }
 
     async onReady() {
-        // 1. Pfade definieren (Absolut sicherstellen, dass sie Strings sind)
+        // --- CRASH PROTECTION ---
+        process.on('uncaughtException', (err) => {
+            if (err.message && err.message.includes('invalid_grant')) {
+                this.log.error('!!! AUTHENTICATION ERROR (invalid_grant) !!! Please generate NEW TOKENS.');
+            } else {
+                this.log.error(`[CRASH PREVENTED] Uncaught Exception: ${err.message}`);
+            }
+        });
+        process.on('unhandledRejection', (reason) => {
+             this.log.error(`[CRASH PREVENTED] Unhandled Rejection: ${reason}`);
+        });
+
+        // 1. Check Auth Code (vom Admin UI) & Exchange
+        await this.checkAndExchangeAuthCode();
+
+        // 2. Pfade
         const tmpDir = os.tmpdir();
         this.credsPath = path.join(tmpDir, `iobroker_google_${this.namespace}_creds.json`);
         this.tokensPath = path.join(tmpDir, `iobroker_google_${this.namespace}_tokens.json`);
         
-        this.log.debug(`[INIT] Paths defined: Creds="${this.credsPath}", Tokens="${this.tokensPath}"`);
-
         this.serverPort = this.config.webServerPort || 8091;
 
         if (this.config.manualIp) {
@@ -55,7 +69,7 @@ class GoogleBroadcast extends utils.Adapter {
 
         this.startWebServer();
         
-        // 2. Assistant starten
+        // 3. Init
         await this.initGoogleAssistant();
 
         this.initMdns();
@@ -70,6 +84,64 @@ class GoogleBroadcast extends utils.Adapter {
         this.subscribeStates('devices.*.volume');
         this.subscribeStates('devices.*.youtube-url');
         this.subscribeStates('devices.*.youtube-index');
+    }
+
+    /**
+     * Prüft, ob ein neuer Auth-Code im Admin-Feld oder im State liegt und tauscht ihn ein
+     */
+    async checkAndExchangeAuthCode() {
+        let code = this.config.authCode;
+        
+        // Fallback: Prüfen, ob der User den Code direkt in den State 'tokens' kopiert hat
+        if (!code) {
+            const tokenState = await this.getStateAsync('tokens');
+            if (tokenState && tokenState.val && typeof tokenState.val === 'string' && tokenState.val.startsWith('4/')) {
+                code = tokenState.val;
+                this.log.info('Found Auth Code in tokens state. Attempting exchange...');
+            }
+        }
+
+        if (code && code.trim() !== '') {
+            this.log.info('Auth Code found. Exchanging for Tokens...');
+            try {
+                if (!this.config.jsonCredentials) {
+                    this.log.error('Cannot exchange code: No credentials.json configured.');
+                    return;
+                }
+                const creds = JSON.parse(this.config.jsonCredentials);
+                const keys = creds.installed || creds.web;
+                
+                if (!keys || !keys.client_id || !keys.client_secret) {
+                    this.log.error('Invalid credentials.json');
+                    return;
+                }
+
+                const oAuth2Client = new OAuth2Client(
+                    keys.client_id,
+                    keys.client_secret,
+                    'urn:ietf:wg:oauth:2.0:oob'
+                );
+
+                const r = await oAuth2Client.getToken(code);
+                this.log.info('Token exchange successful!');
+                
+                // Speichern in State
+                await this.setStateAsync('tokens', JSON.stringify(r.tokens), true);
+                
+                // Config bereinigen, damit er nicht bei jedem Start erneut versucht wird
+                if (this.config.authCode) {
+                    const obj = await this.getForeignObjectAsync(`system.adapter.${this.namespace}`);
+                    if (obj && obj.native) {
+                        obj.native.authCode = '';
+                        await this.setForeignObjectAsync(`system.adapter.${this.namespace}`, obj);
+                        this.log.info('Cleared Auth Code from configuration.');
+                    }
+                }
+            } catch (e) {
+                this.log.error(`Token Exchange Failed: ${e.message}`);
+                this.log.error('Please generate a NEW Auth Link and try again.');
+            }
+        }
     }
 
     findLocalIp() {
@@ -105,50 +177,42 @@ class GoogleBroadcast extends utils.Adapter {
             const credentialsJson = this.config.jsonCredentials;
             const tokenState = await this.getStateAsync('tokens');
             
-            // Lokale Referenzen sichern
             const cPath = this.credsPath;
             const tPath = this.tokensPath;
             
-            if (!cPath || !tPath) {
-                this.log.error(`[INIT] Critical: Paths are empty! cPath="${cPath}"`);
-                return;
-            }
+            if (!cPath || !tPath) return;
 
+            // Prüfen ob wir gültige JSON Tokens haben (kein Auth Code)
             let tokensJson = null;
-            if (tokenState && tokenState.val && !tokenState.val.includes('{')) {
-                this.log.info('Auth code detected in tokens state.');
-            } else if (tokenState) {
-                tokensJson = tokenState.val;
+            if (tokenState && tokenState.val) {
+                if (tokenState.val.startsWith('{')) {
+                    tokensJson = tokenState.val;
+                } else {
+                    this.log.warn('Tokens state contains raw string (Auth Code?) - Waiting for next exchange cycle or manual fix.');
+                }
             }
 
             if (credentialsJson && tokensJson) {
-                // Synchrones Schreiben um Race-Conditions auszuschließen
                 try {
                     fs.writeFileSync(cPath, credentialsJson);
                     fs.writeFileSync(tPath, tokensJson);
-                    this.log.debug('[INIT] Files written to disk');
                 } catch (err) {
-                    this.log.error(`[INIT] File Write Error: ${err.message}`);
+                    this.log.error(`File Write Error: ${err.message}`);
                     return;
                 }
                 
-                // --- DEBUG & FIX: Config Objekt ---
                 const assistantConfig = {
                     auth: {
-                        keyFilePath: cPath,      // Standard
+                        keyFilePath: cPath,
                         savedTokensPath: tPath,
                     },
                     conversation: {
                         lang: this.config.language || 'de-DE', 
                     },
-                    // FALLBACK: Wir fügen die Keys auch auf Root-Ebene hinzu, falls die Library spinnt
                     keyFilePath: cPath, 
                     savedTokensPath: tPath
                 };
                 
-                // Loggen, was wir übergeben (Passwörter maskiert man hier normalerweise, aber Pfade sind ok)
-                this.log.debug(`[INIT] Initializing Assistant with Config: ${JSON.stringify(assistantConfig)}`);
-
                 this.assistant = new GoogleAssistant(assistantConfig);
                 
                 this.assistant.on('ready', () => {
@@ -162,19 +226,20 @@ class GoogleBroadcast extends utils.Adapter {
                     this.log.error(`Assistant Error: ${err}`);
                 });
             } else {
-                this.log.warn(`Assistant Credentials missing. JSON present: ${!!credentialsJson}, Tokens present: ${!!tokensJson}`);
+                this.log.warn('Assistant Credentials or Tokens missing.');
             }
         } catch (e) { 
-            this.log.error(`Assistant Init Crash: ${e.message}`); 
-            if (e.stack) this.log.debug(e.stack);
+            this.log.error(`Assistant Init Error: ${e.message}`); 
         }
     }
 
     async triggerAssistantCommand(deviceId, deviceName, command) {
         if (!this.assistant || !this.assistantReady) {
-            this.log.warn('[ASSISTANT] Not ready yet. Re-initializing...');
             await this.initGoogleAssistant();
-            if (!this.assistantReady) return;
+            if (!this.assistantReady) {
+                this.log.warn('[ASSISTANT] Not ready.');
+                return;
+            }
         }
 
         const finalCommand = `${command} auf ${deviceName}`;
@@ -182,28 +247,30 @@ class GoogleBroadcast extends utils.Adapter {
 
         const config = { conversation: { textQuery: finalCommand } };
 
-        this.assistant.start(config, (conversation) => {
-            conversation
-                .on('audio-data', () => {})
-                .on('response', (text) => { if (text) this.log.debug(`[ASSISTANT] Response: ${text}`); })
-                .on('ended', (error) => {
-                    if (error) this.log.warn(`Assistant Command Error: ${error}`);
-                });
-        });
+        try {
+            this.assistant.start(config, (conversation) => {
+                conversation
+                    .on('audio-data', () => {})
+                    .on('response', (text) => { if (text) this.log.debug(`[ASSISTANT] Response: ${text}`); })
+                    .on('ended', (error) => {
+                        if (error && error.toString().includes('invalid_grant')) {
+                             this.log.error('!!! TOKEN EXPIRED !!! Please generate new Auth Code.');
+                        } else if (error) {
+                             this.log.warn(`Assistant Command Error: ${error}`);
+                        }
+                    });
+            });
+        } catch (e) { this.log.error(`Start Error: ${e.message}`); }
     }
 
     async getPlaylistTitle(url) {
         try {
             const oembedUrl = `https://www.youtube.com/oembed?url=${encodeURIComponent(url)}&format=json`;
-            this.log.debug(`[METADATA] Fetching oEmbed info for: ${url}`);
             const response = await axios.get(oembedUrl, { timeout: 3000 });
-            
-            if (response.data && response.data.title) {
-                return response.data.title;
-            }
+            if (response.data && response.data.title) return response.data.title;
             return null;
         } catch (e) {
-            this.log.warn(`[METADATA] Could not extract title via oEmbed: ${e.message}`);
+            this.log.warn(`[METADATA] Error: ${e.message}`);
             return null;
         }
     }
@@ -241,18 +308,14 @@ class GoogleBroadcast extends utils.Adapter {
         const folder = 'devices';
 
         await this.setObjectNotExistsAsync(`${folder}.${cleanId}`, { type: 'device', common: { name: friendlyName }, native: { ip: ip, port: port } });
-        
         await this.setObjectNotExistsAsync(`${folder}.${cleanId}.volume`, { type: 'state', common: { name: 'Volume', type: 'number', role: 'level.volume', read: true, write: true } });
         this.subscribeStates(`${folder}.${cleanId}.volume`);
-        
         await this.setObjectNotExistsAsync(`${folder}.${cleanId}.broadcast`, { type: 'state', common: { name: 'Broadcast', type: 'string', role: 'text', read: true, write: true } });
-
         await this.setObjectNotExistsAsync(`${folder}.${cleanId}.youtube-url`, { 
             type: 'state', 
             common: { name: 'YouTube URL', type: 'string', role: 'media.url', read: true, write: true, ack: true } 
         });
         this.subscribeStates(`${folder}.${cleanId}.youtube-url`);
-
         await this.setObjectNotExistsAsync(`${folder}.${cleanId}.youtube-index`, { 
             type: 'state', 
             common: { name: 'Playlist Index', type: 'number', role: 'value', read: true, write: true, def: 1 } 
@@ -266,7 +329,6 @@ class GoogleBroadcast extends utils.Adapter {
             const localUrl = `http://${this.localIp}:${this.serverPort}/tts/${deviceId}.mp3?t=${Date.now()}`;
             const response = await axios.get(ttsUrl, { responseType: 'arraybuffer' });
             this.audioBuffers.set(deviceId, response.data);
-            
             const client = new Client();
             client.connect({ host: deviceIp, port: devicePort || 8009 }, () => {
                 client.launch(DefaultMediaReceiver, (err, player) => {
@@ -281,7 +343,11 @@ class GoogleBroadcast extends utils.Adapter {
 
     async onStateChange(id, state) {
         if (state && !state.ack && state.val !== null) {
-            
+            const now = Date.now();
+            const lastRun = this.commandLocks.get(id) || 0;
+            if (now - lastRun < 2000) return;
+            this.commandLocks.set(id, now);
+
             const getDevInfo = async () => {
                 const parts = id.split('.');
                 const deviceId = parts[parts.length - 2];
@@ -300,25 +366,21 @@ class GoogleBroadcast extends utils.Adapter {
                 if (obj && obj.common && obj.common.name) {
                     const friendlyName = obj.common.name;
                     const url = state.val;
-                    
                     const title = await this.getPlaylistTitle(url);
                     const playCommand = title ? `Spiele ${title}` : `Spiele ${url}`;
                     
-                    this.log.info(`[FLOW] Identified Title: "${title || 'Unknown'}" -> Command: "${playCommand}"`);
-                    
+                    this.log.info(`[FLOW] Starting playback: "${playCommand}" on ${friendlyName}`);
                     await this.triggerAssistantCommand(deviceId, friendlyName, playCommand);
                     
                     const indexState = await this.getStateAsync(`${folder}.${deviceId}.youtube-index`);
                     const index = (indexState && indexState.val) ? indexState.val : 1;
                     
                     if (index > 1) {
-                        this.log.info(`[FLOW] Skipping to index ${index} in 7 seconds...`);
                         setTimeout(async () => {
                             const skipCommand = `Springe zu Titel ${index}`;
                             await this.triggerAssistantCommand(deviceId, friendlyName, skipCommand);
                         }, 7000); 
                     }
-                    
                     this.setState(id, state.val, true);
                 }
             }
