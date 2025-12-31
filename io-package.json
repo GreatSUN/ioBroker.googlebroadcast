@@ -1,9 +1,13 @@
 {
   "common": {
     "name": "googlebroadcast",
-    "version": "0.7.10",
+    "version": "0.8.0",
     "messagebox": true,
     "news": {
+      "0.8.0": {
+        "en": "Major Refactoring: Switch from direct streaming (play-dl) to Google Assistant Commands for music to avoid cookie issues. Added playlist index support.",
+        "de": "Großes Refactoring: Wechsel von Direkt-Streaming (play-dl) zu Google Assistant Befehlen für Musik, um Cookie-Probleme zu umgehen. Playlist-Index Unterstützung hinzugefügt."
+      },
       "0.7.10": {
         "en": "Fixed: added missing messagebox key with value true, added removing of old auth codes (useless anyways)"
       },
@@ -94,7 +98,8 @@
     },
     "title": "Google Assistant Broadcast",
     "desc": {
-      "en": "Broadcasts text messages via Google Assistant SDK or Chromecast TTS"
+      "en": "Broadcasts text messages via Google Assistant SDK or Chromecast TTS",
+      "de": "Sendet Textnachrichten über Google Assistant SDK oder Chromecast TTS"
     },
     "authors": [
       "User"
@@ -104,7 +109,9 @@
       "google",
       "assistant",
       "broadcast",
-      "tts"
+      "tts",
+      "music",
+      "youtube"
     ],
     "platform": "Javascript/Node.js",
     "main": "main.js",
@@ -127,9 +134,8 @@
   },
   "native": {
     "jsonCredentials": "",
-    "authCode": "",
     "deviceModelId": "iobroker-model",
-    "language": "en-US",
+    "language": "de-DE",
     "broadcastMode": "assistant",
     "ttsEngine": "free",
     "googleApiKey": "",
@@ -139,8 +145,7 @@
     "webServerIp": "",
     "webServerPort": 8091,
     "manualIp": "",
-    "deviceRemovalTimeout": 24,
-    "youtubeAuthCode": ""
+    "deviceRemovalTimeout": 24
   },
   "objects": [],
   "instanceObjects": [
@@ -161,26 +166,12 @@
       "_id": "tokens",
       "type": "state",
       "common": {
-        "name": "Google OAuth Tokens",
+        "name": "Google OAuth Tokens (Assistant)",
         "type": "string",
         "role": "value",
         "read": true,
         "write": true,
         "def": ""
-      },
-      "native": {}
-    },
-    {
-      "_id": "youtube_oauth_tokens",
-      "type": "state",
-      "common": {
-        "name": "YouTube OAuth Tokens",
-        "type": "string",
-        "role": "json",
-        "read": true,
-        "write": true,
-        "def": "",
-        "desc": "YouTube Premium OAuth tokens for play-dl authentication"
       },
       "native": {}
     },

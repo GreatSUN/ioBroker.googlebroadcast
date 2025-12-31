@@ -10,367 +10,40 @@
     <script type="text/javascript" src="words.js"></script>
 
     <script type="text/javascript">
-        var interfacesList = [];
-        var adapterWebServerIp = '';
-        var adapterWebServerPort = 8091;
-
         function load(settings, onChange) {
-            console.log('GoogleBroadcast: Settings loaded', settings);
             if (!settings) return;
-            
-            // Store settings for YouTube auth URL generation
-            adapterWebServerPort = settings.webServerPort || 8091;
-            // Use configured webServerIp if available
-            if (settings.webServerIp) {
-                adapterWebServerIp = settings.webServerIp;
-                console.log('GoogleBroadcast: Using configured webServerIp:', adapterWebServerIp);
-            }
-            
             $('.value').each(function () {
                 var $key = $(this);
                 var id = $key.attr('id');
-                if (id === 'webServerIp') return;
-
                 if ($key.attr('type') === 'checkbox') {
                     $key.prop('checked', settings[id]).on('change', () => onChange());
                 } else {
                     $key.val(settings[id]).on('change', () => onChange()).on('keyup', () => onChange());
-                    $key.on('change', () => onChange());
                 }
             });
-
-            var target = adapter + '.' + instance;
-            console.log('GoogleBroadcast: Requesting interfaces from instance: ' + target);
-
-            // 1. Try to get interfaces from running adapter
-            sendTo(target, 'getInterfaces', {}, function (response) {
-                console.log('GoogleBroadcast: sendTo response received', response);
-                if (response && response.result) {
-                    // Pass onChange to helper function
-                    mergeInterfaces(response.result, settings.webServerIp, onChange);
-                }
-                // Store webserver info from running adapter
-                if (response && response.webServerIp) {
-                    adapterWebServerIp = response.webServerIp;
-                    console.log('GoogleBroadcast: Adapter webserver IP:', adapterWebServerIp);
-                }
-                if (response && response.webServerPort) {
-                    adapterWebServerPort = response.webServerPort;
-                    console.log('GoogleBroadcast: Adapter webserver port:', adapterWebServerPort);
-                }
-                // Update YouTube auth URL with new info (use window. since it's set there)
-                if (typeof window.updateYouTubeAuthUrl === 'function') {
-                    console.log('GoogleBroadcast: Updating YouTube auth URL with IP:', adapterWebServerIp);
-                    window.updateYouTubeAuthUrl();
-                }
-            });
-
-            // 2. Also try to get interfaces from Host Object (Offline backup)
-            console.log('GoogleBroadcast: Attempting offline fallback (host object)');
-            socket.emit('getObject', 'system.adapter.' + target, function (err, obj) {
-                if (err) console.error('GoogleBroadcast: Failed to get adapter object', err);
-                
-                if (!err && obj && obj.common && obj.common.host) {
-                    console.log('GoogleBroadcast: Found host ID: ' + obj.common.host);
-                    socket.emit('getObject', 'system.host.' + obj.common.host, function (err, hostObj) {
-                        if (err) console.error('GoogleBroadcast: Failed to get host object', err);
-
-                        if (!err && hostObj && hostObj.native && hostObj.native.hardware && hostObj.native.hardware.networkInterfaces) {
-                             console.log('GoogleBroadcast: Found interfaces in host object');
-                             var interfaces = hostObj.native.hardware.networkInterfaces;
-                             var list = [];
-                             for (var ifaceName in interfaces) {
-                                 if (!interfaces.hasOwnProperty(ifaceName)) continue;
-                                 interfaces[ifaceName].forEach(function(iface) {
-                                     if (iface.family === 'IPv4' && !iface.internal) {
-                                         list.push({ name: ifaceName, address: iface.address });
-                                     }
-                                 });
-                             }
-                             console.log('GoogleBroadcast: Parsed host interfaces', list);
-                             // Pass onChange to helper function
-                             mergeInterfaces(list, settings.webServerIp, onChange);
-                        } else {
-                            console.log('GoogleBroadcast: Host object does not contain networkInterfaces or invalid structure');
-                        }
-                    });
-                }
-            });
-
-            updateUI();
-            $('#broadcastMode').on('change', updateUI);
-            $('#ttsEngine').on('change', updateUI);
-            onChange(false);
-
+            
+            // Generate Auth Link Logic
             $('#btn_generate_link').on('click', function() {
                 var json = $('#jsonCredentials').val();
-                if(!json) { alert(_('Please paste credentials.json first')); return; }
+                if(!json) { alert('Please paste credentials.json first'); return; }
                 try {
                     var creds = JSON.parse(json);
                     var keys = creds.installed || creds.web;
                     if (!keys || !keys.client_id) { alert('Invalid JSON. Missing client_id.'); return; }
-                    // Combined scopes: Assistant SDK + YouTube
-                    var scopes = [
-                        'https://www.googleapis.com/auth/assistant-sdk-prototype',
-                        'https://www.googleapis.com/auth/youtube'
-                    ];
+                    
+                    var scopes = ['https://www.googleapis.com/auth/assistant-sdk-prototype'];
                     var scope = encodeURIComponent(scopes.join(' '));
                     var redirect = encodeURIComponent('urn:ietf:wg:oauth:2.0:oob');
                     var url = 'https://accounts.google.com/o/oauth2/v2/auth?access_type=offline&scope=' + scope + '&response_type=code&client_id=' + keys.client_id + '&redirect_uri=' + redirect;
+                    
                     $('#auth_link').attr('href', url);
                     $('#auth_link_container').show();
                     $('#auth_step_2').show();
                 } catch(e) { alert('Error: ' + e); }
             });
-
-            $('#btn_reauth').on('click', function() {
-                // Clear stored tokens
-                sendTo(adapter + '.' + instance, 'clearTokens', {}, function(response) {
-                    M.toast({html: 'Tokens cleared. Please generate a new auth link.'});
-                    $('#auth_link_container').hide();
-                    $('#auth_step_2').hide();
-                });
-            });
             
-            $('#btn_scan').on('click', function() {
-                sendTo(null, 'scan', {}, function(res) { M.toast({html: 'Scan started'}); });
-            });
-
-            // YouTube Premium Authentication
-            initYouTubeAuth();
-        }
-
-        // YouTube Premium Authentication Functions
-        function initYouTubeAuth() {
-            var target = adapter + '.' + instance;
-            
-            // Check initial YouTube token status
-            checkYouTubeTokenStatus();
-            
-            // Generate OAuth URL and update button href
-            // Make it globally accessible for updating when adapter info arrives
-            window.updateYouTubeAuthUrl = updateYouTubeAuthUrl;
-            
-            function updateYouTubeAuthUrl() {
-                var json = $('#jsonCredentials').val();
-                var $btn = $('#btn_youtube_auth');
-                
-                if (!json) {
-                    $btn.attr('href', '#').addClass('disabled');
-                    return;
-                }
-                
-                try {
-                    var creds = JSON.parse(json);
-                    var keys = creds.installed || creds.web;
-                    if (!keys || !keys.client_id) {
-                        $btn.attr('href', '#').addClass('disabled');
-                        return;
-                    }
-                    
-                    // YouTube scope
-                    var scope = encodeURIComponent('https://www.googleapis.com/auth/youtube');
-                    
-                    // Use OOB redirect for copy/paste flow (interactive exchange)
-                    // This is more reliable than localhost callback
-                    var redirectUri = encodeURIComponent('urn:ietf:wg:oauth:2.0:oob');
-                    
-                    var url = 'https://accounts.google.com/o/oauth2/v2/auth' +
-                        '?access_type=offline' +
-                        '&scope=' + scope +
-                        '&prompt=consent' +
-                        '&response_type=code' +
-                        '&client_id=' + keys.client_id +
-                        '&redirect_uri=' + redirectUri;
-                    
-                    $btn.attr('href', url).removeClass('disabled');
-                } catch(e) {
-                    $btn.attr('href', '#').addClass('disabled');
-                }
-            }
-            
-            // Update URL when credentials change
-            $('#jsonCredentials').on('change keyup', function() {
-                updateYouTubeAuthUrl();
-            });
-            
-            // Initial URL generation
-            updateYouTubeAuthUrl();
-            
-            // Click handler for the authorize button
-            $('#btn_youtube_auth').on('click', function(e) {
-                var href = $(this).attr('href');
-                
-                // Check if button is disabled or no URL
-                if (!href || href === '#' || $(this).hasClass('disabled')) {
-                    e.preventDefault();
-                    M.toast({html: '✗ Please paste credentials.json in the Assistant Credentials section first.'});
-                    return false;
-                }
-                
-                // Show the code input field
-                $('#youtube_code_input').show();
-                M.toast({html: 'Copy the code from Google and paste it below, then click Exchange Code.'});
-                // Let the link open naturally (don't prevent default)
-            });
-            
-            // Refresh Status button handler
-            $('#btn_youtube_refresh').on('click', function() {
-                checkYouTubeTokenStatus();
-                M.toast({html: 'Checking YouTube token status...'});
-            });
-            
-            // Exchange Code button handler - immediate exchange, no save needed
-            $('#btn_youtube_exchange').on('click', function() {
-                var code = $('#youtube_auth_code').val().trim();
-                if (!code) {
-                    M.toast({html: '✗ Please enter the authorization code'});
-                    return;
-                }
-                
-                $(this).addClass('disabled').text('Exchanging...');
-                $('#youtube_auth_code').prop('disabled', true);
-                
-                console.log('GoogleBroadcast: Exchanging YouTube auth code:', code.substring(0, 10) + '...');
-                
-                sendTo(target, 'exchangeYouTubeCode', { code: code }, function(response) {
-                    $('#btn_youtube_exchange').removeClass('disabled').text('Exchange Code');
-                    $('#youtube_auth_code').prop('disabled', false);
-                    
-                    console.log('GoogleBroadcast: Exchange response:', response);
-                    
-                    if (response && response.success) {
-                        M.toast({html: '✓ YouTube Premium connected successfully!'});
-                        $('#youtube_auth_code').val('');
-                        $('#youtube_code_input').hide();
-                        checkYouTubeTokenStatus();
-                    } else {
-                        var error = response && response.error ? response.error : 'Unknown error';
-                        console.error('GoogleBroadcast: Exchange failed:', error);
-                        M.toast({html: '✗ Failed: ' + error});
-                    }
-                });
-            });
-            
-            // Clear YouTube tokens button
-            $('#btn_youtube_clear').on('click', function() {
-                if (!confirm('Are you sure you want to clear YouTube Premium authentication?')) {
-                    return;
-                }
-                
-                sendTo(target, 'clearYouTubeTokens', {}, function(response) {
-                    if (response && response.success) {
-                        M.toast({html: 'YouTube tokens cleared'});
-                        checkYouTubeTokenStatus();
-                    }
-                });
-            });
-        }
-        
-        function checkYouTubeTokenStatus() {
-            var target = adapter + '.' + instance;
-            
-            sendTo(target, 'getYouTubeTokenStatus', {}, function(response) {
-                var $statusText = $('#youtube_status_text');
-                var $statusIcon = $('#youtube_status_icon');
-                
-                if (response && response.success && response.status) {
-                    var status = response.status;
-                    
-                    if (status.connected) {
-                        $statusIcon.text('✓').css('color', '#4caf50');
-                        
-                        var text = 'Connected';
-                        if (status.expiryDate) {
-                            var expiry = new Date(status.expiryDate);
-                            if (status.isExpired) {
-                                text += ' (Token expired - will refresh on next use)';
-                            } else {
-                                text += ' (Expires: ' + expiry.toLocaleString() + ')';
-                            }
-                        }
-                        $statusText.text(text);
-                    } else {
-                        $statusIcon.text('⚪').css('color', '');
-                        $statusText.text('Not connected');
-                    }
-                } else {
-                    $statusIcon.text('⚪').css('color', '');
-                    $statusText.text('Not connected');
-                }
-            });
-        }
-
-        // Added onChange parameter
-        function mergeInterfaces(newList, savedIp, onChange) {
-            console.log('GoogleBroadcast: Merging interfaces', newList);
-            if (!newList || newList.length === 0) return;
-
-            // Merge into global list preventing duplicates
-            newList.forEach(function(item) {
-                if (!interfacesList.find(x => x.address === item.address)) {
-                    interfacesList.push(item);
-                }
-            });
-
-            var $sel = $('#webServerIp');
-            $sel.empty(); // Clear to rebuild
-            $sel.append('<option value="">Auto-detect (Default)</option>');
-            
-            var found = false;
-            interfacesList.forEach(function(iface) {
-                var selected = (iface.address === savedIp) ? 'selected' : '';
-                if (selected) found = true;
-                $sel.append('<option value="' + iface.address + '" ' + selected + '>' + iface.name + ' - ' + iface.address + '</option>');
-            });
-
-            // If saved IP is not in the list, add it
-            if (savedIp && !found) {
-                $sel.append('<option value="' + savedIp + '" selected>' + savedIp + ' (Saved)</option>');
-            }
-
-            // Safe Materialize CSS Initialization
-            try {
-                if (typeof M !== 'undefined' && M.FormSelect && M.FormSelect.init) {
-                    M.FormSelect.init($sel[0]);
-                } else if ($sel.formSelect) {
-                    $sel.formSelect();
-                } else if ($sel.material_select) {
-                    $sel.material_select();
-                } else {
-                    console.warn('GoogleBroadcast: No Select initialization method found (formSelect/material_select).');
-                }
-            } catch (e) {
-                console.error('GoogleBroadcast: Error initializing select:', e);
-            }
-
-            // Trigger onChange properly now that we have the function
-            $sel.on('change', function() {
-                if (typeof onChange === 'function') {
-                    onChange();
-                } else {
-                    console.warn('GoogleBroadcast: onChange is not a function in mergeInterfaces scope');
-                }
-            });
-        }
-
-        function updateUI() {
-            var mode = $('#broadcastMode').val();
-            var engine = $('#ttsEngine').val();
-            
-            if (mode === 'cast') {
-                $('.assistant-only').hide();
-                $('.cast-only').show();
-            } else {
-                $('.assistant-only').show();
-                $('.cast-only').hide();
-            }
-
-            if (mode === 'cast' && engine === 'google_cloud') {
-                $('.api-key-field').show();
-            } else {
-                $('.api-key-field').hide();
-            }
+            onChange(false);
+            if (M) M.updateTextFields();
         }
 
         function save(callback) {
@@ -386,11 +59,6 @@
             callback(obj);
         }
     </script>
-    
-    <style>
-        .safe-mode-input { display: none; }
-        .safe-mode-input.visible { display: block; }
-    </style>
 </head>
 <body>
     <div class="m adapter-container">
@@ -402,145 +70,44 @@
 
         <div class="row">
             <div class="col s12">
-                <h5>Main Configuration</h5>
+                <h5>Google Assistant Configuration</h5>
                 <div class="col s6">
                     <div class="input-field">
-                        <select id="broadcastMode" class="value">
-                            <option value="assistant">Google Assistant SDK (Official)</option>
-                            <option value="cast">Chromecast / Google Home (TTS)</option>
-                        </select>
-                        <label for="broadcastMode">Broadcast Method</label>
+                        <input type="text" id="language" class="value" placeholder="de-DE" />
+                        <label for="language">Assistant Language</label>
                     </div>
-                </div>
-                <div class="col s6">
-                    <div class="input-field">
-                        <input type="text" id="language" class="value" placeholder="en-US" />
-                        <label for="language">Default Language (en-US, de-DE)</label>
-                    </div>
-                </div>
-            </div>
-        </div>
-
-        <div class="row cast-only" style="display:none; padding: 10px;">
-            <div class="col s12"><h5>Chromecast TTS Settings</h5></div>
-            
-            <div class="col s6">
-                <div class="input-field">
-                    <select id="ttsEngine" class="value">
-                        <option value="free">Free (Google Translate)</option>
-                        <option value="google_cloud">Google Cloud (High Quality)</option>
-                    </select>
-                    <label for="ttsEngine">TTS Engine</label>
-                </div>
-            </div>
-            <div class="col s6 api-key-field" style="display:none;">
-                <div class="input-field">
-                    <input type="password" id="googleApiKey" class="value" />
-                    <label for="googleApiKey">Google Cloud API Key</label>
-                </div>
-            </div>
-
-            <div class="col s6">
-                <div class="input-field">
-                    <select id="webServerIp" class="value">
-                        </select>
-                    <label for="webServerIp">Own IP for Web Server (Streaming Interface)</label>
-                </div>
-            </div>
-            <div class="col s6">
-                <div class="input-field">
-                    <input type="number" id="webServerPort" class="value" placeholder="8091" />
-                    <label for="webServerPort">Web Server Port</label>
-                </div>
-            </div>
-        </div>
-
-        <div class="row assistant-only">
-            <div class="col s12">
-                <h5 class="translate">Assistant Credentials</h5>
-                <div class="col s12">
-                    <textarea id="jsonCredentials" class="value materialize-textarea" placeholder="Paste credentials.json here..." style="font-family: monospace; font-size: 0.8em; min-height: 80px;"></textarea>
-                </div>
-                <div class="col s12">
-                     <a class="waves-effect waves-light btn translate" id="btn_generate_link">Get Auth Link</a>
-                     <a class="waves-effect waves-light btn red" id="btn_reauth" style="margin-left: 10px;">Re-Authenticate</a>
-                     <div id="auth_link_container" style="display:none; margin-top:10px;">
-                        <a href="#" target="_blank" id="auth_link" style="font-weight:bold;">OPEN GOOGLE LOGIN</a>
-                     </div>
-                     <div id="auth_step_2" style="margin-top: 10px; display:none;">
-                        <input type="text" id="authCode" class="value" placeholder="Paste Auth Code here" />
-                     </div>
                 </div>
             </div>
         </div>
 
         <div class="row">
             <div class="col s12">
-                <h5>Device Scanning</h5>
+                <h5>Credentials (Assistant SDK)</h5>
+                <div class="col s12">
+                    <textarea id="jsonCredentials" class="value materialize-textarea" placeholder="Paste credentials.json here..." style="font-family: monospace; font-size: 0.8em; min-height: 80px;"></textarea>
+                </div>
+                <div class="col s12" style="margin-top: 10px;">
+                     <a class="waves-effect waves-light btn" id="btn_generate_link">1. Get Auth Link</a>
+                     
+                     <div id="auth_link_container" style="display:none; margin-top:10px; margin-bottom: 10px;">
+                        <a href="#" target="_blank" id="auth_link" style="font-weight:bold; color: #d32f2f;">CLICK HERE TO OPEN GOOGLE LOGIN</a>
+                     </div>
+                     
+                     <div id="auth_step_2" style="display:none;">
+                        <p>2. Copy the code from Google and paste it into the <b>Token</b> field below (not here in settings, but in the object tree: googlebroadcast.0.tokens). The adapter will exchange it automatically.</p>
+                     </div>
+                </div>
+            </div>
+        </div>
+        
+        <div class="row">
+            <div class="col s12">
+                <h5>Discovery</h5>
                 <div class="col s4">
                     <div class="input-field">
                         <input type="number" id="scanInterval" class="value" />
                         <label for="scanInterval">Scan Interval (min)</label>
                     </div>
-                </div>
-                <div class="col s4">
-                    <div class="input-field">
-                        <input type="number" id="pollInterval" class="value" />
-                        <label for="pollInterval">Volume Poll Interval (sec)</label>
-                    </div>
-                </div>
-                <div class="col s4">
-                    <div class="input-field">
-                        <input type="number" id="deviceRemovalTimeout" class="value" />
-                        <label for="deviceRemovalTimeout">Remove devices after not responding (hours, 0=disable)</label>
-                    </div>
-                </div>
-            </div>
-            <div class="row">
-                <div class="col s4" style="margin-top: 20px;">
-                    <a class="waves-effect waves-light btn blue" id="btn_scan">Scan Devices Now</a>
-                </div>
-            </div>
-        </div>
-
-        <!-- YouTube Premium Authentication Section -->
-        <div class="row cast-only" style="display:none;">
-            <div class="col s12">
-                <h5>🎵 YouTube Premium Authentication</h5>
-                
-                <!-- Status Display -->
-                <div class="col s12">
-                    <p id="youtube_status">
-                        <span id="youtube_status_icon">⚪</span>
-                        <span id="youtube_status_text">Not connected</span>
-                    </p>
-                </div>
-                
-                <!-- Authentication Info -->
-                <div class="col s12">
-                    <p><strong>Instructions:</strong></p>
-                    <ol>
-                        <li>Click "Authorize YouTube Premium" button below</li>
-                        <li>Complete the Google authorization in the new tab</li>
-                        <li>Google will show you an authorization code - copy it</li>
-                        <li>Paste the code in the field below and click "Exchange Code"</li>
-                    </ol>
-                </div>
-                
-                <!-- Authorize Button -->
-                <div class="col s12" style="margin-top: 10px;">
-                    <a class="waves-effect waves-light btn red disabled" id="btn_youtube_auth" href="#" target="_blank">Authorize YouTube Premium</a>
-                    <a class="waves-effect waves-light btn blue" id="btn_youtube_refresh" style="margin-left: 10px;">Refresh Status</a>
-                    <a class="waves-effect waves-light btn grey" id="btn_youtube_clear" style="margin-left: 10px;">Clear Tokens</a>
-                </div>
-                
-                <!-- Code Input (interactive exchange) -->
-                <div id="youtube_code_input" class="col s12" style="margin-top: 15px; display: none;">
-                    <div class="input-field">
-                        <input type="text" id="youtube_auth_code" />
-                        <label for="youtube_auth_code">Paste the authorization code from Google here</label>
-                    </div>
-                    <a class="waves-effect waves-light btn green" id="btn_youtube_exchange">Exchange Code</a>
                 </div>
             </div>
         </div>
