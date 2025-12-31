@@ -1,8 +1,11 @@
 {
   "common": {
     "name": "googlebroadcast",
-    "version": "0.7.3",
+    "version": "0.7.4",
     "news": {
+      "0.7.4": {
+        "en": "Fixed YouTube OAuth: use adapter IP instead of localhost, added token persistence in io-package.json"
+      },
       "0.7.3": {
         "en": "Fixed YouTube auth button - now uses direct href link instead of JS popup"
       },
@@ -144,6 +147,20 @@
         "read": true,
         "write": true,
         "def": ""
+      },
+      "native": {}
+    },
+    {
+      "_id": "youtube_oauth_tokens",
+      "type": "state",
+      "common": {
+        "name": "YouTube OAuth Tokens",
+        "type": "string",
+        "role": "json",
+        "read": true,
+        "write": true,
+        "def": "",
+        "desc": "YouTube Premium OAuth tokens for play-dl authentication"
       },
       "native": {}
     },

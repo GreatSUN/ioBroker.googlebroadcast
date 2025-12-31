@@ -256,9 +256,10 @@ class GoogleBroadcast extends utils.Adapter {
                 throw new Error('No valid OAuth credentials configured');
             }
             
-            const redirectUri = `http://localhost:${this.serverPort}/oauth/youtube`;
+            // Use the actual server IP for redirect URI (must match what was used in auth URL)
+            const redirectUri = `http://${this.localIp}:${this.serverPort}/oauth/youtube`;
             
-            this.log.info(`[YOUTUBE-AUTH] Exchanging code for tokens...`);
+            this.log.info(`[YOUTUBE-AUTH] Exchanging code for tokens (redirect: ${redirectUri})...`);
             
             const oAuth2Client = new OAuth2Client(creds.client_id, creds.client_secret, redirectUri);
             const { tokens } = await oAuth2Client.getToken(code);
@@ -914,6 +915,27 @@ class GoogleBroadcast extends utils.Adapter {
         if (!obj || !obj.command) return;
         
         switch (obj.command) {
+            case 'getInterfaces':
+                // Return network interfaces and server info for admin UI
+                const interfaces = os.networkInterfaces();
+                const list = [];
+                for (const ifaceName in interfaces) {
+                    if (!interfaces.hasOwnProperty(ifaceName)) continue;
+                    interfaces[ifaceName].forEach((iface) => {
+                        if (iface.family === 'IPv4' && !iface.internal) {
+                            list.push({ name: ifaceName, address: iface.address });
+                        }
+                    });
+                }
+                if (obj.callback) {
+                    this.sendTo(obj.from, obj.command, {
+                        result: list,
+                        webServerPort: this.serverPort,
+                        webServerIp: this.localIp
+                    }, obj.callback);
+                }
+                break;
+                
             case 'scan':
                 this.scanNetwork();
                 if (obj.callback) {
@@ -1018,7 +1040,8 @@ class GoogleBroadcast extends utils.Adapter {
         let redirectUri;
         
         if (mode === 'automatic') {
-            redirectUri = `http://localhost:${this.serverPort}/oauth/youtube`;
+            // Use actual server IP for OAuth callback
+            redirectUri = `http://${this.localIp}:${this.serverPort}/oauth/youtube`;
         } else {
             redirectUri = 'urn:ietf:wg:oauth:2.0:oob';
         }

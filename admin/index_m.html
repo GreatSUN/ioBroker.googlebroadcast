@@ -11,15 +11,20 @@
 
     <script type="text/javascript">
         var interfacesList = [];
+        var adapterWebServerIp = '';
+        var adapterWebServerPort = 8091;
 
         function load(settings, onChange) {
             console.log('GoogleBroadcast: Settings loaded', settings);
             if (!settings) return;
             
+            // Store settings for YouTube auth URL generation
+            adapterWebServerPort = settings.webServerPort || 8091;
+            
             $('.value').each(function () {
                 var $key = $(this);
                 var id = $key.attr('id');
-                if (id === 'webServerIp') return; 
+                if (id === 'webServerIp') return;
 
                 if ($key.attr('type') === 'checkbox') {
                     $key.prop('checked', settings[id]).on('change', () => onChange());
@@ -38,8 +43,19 @@
                 if (response && response.result) {
                     // Pass onChange to helper function
                     mergeInterfaces(response.result, settings.webServerIp, onChange);
-                } else {
-                    console.log('GoogleBroadcast: sendTo response empty or invalid');
+                }
+                // Store webserver info from running adapter
+                if (response && response.webServerIp) {
+                    adapterWebServerIp = response.webServerIp;
+                    console.log('GoogleBroadcast: Adapter webserver IP:', adapterWebServerIp);
+                }
+                if (response && response.webServerPort) {
+                    adapterWebServerPort = response.webServerPort;
+                    console.log('GoogleBroadcast: Adapter webserver port:', adapterWebServerPort);
+                }
+                // Update YouTube auth URL with new info
+                if (typeof updateYouTubeAuthUrl === 'function') {
+                    updateYouTubeAuthUrl();
                 }
             });
 
@@ -126,6 +142,9 @@
             checkYouTubeTokenStatus();
             
             // Generate OAuth URL and update button href
+            // Make it globally accessible for updating when adapter info arrives
+            window.updateYouTubeAuthUrl = updateYouTubeAuthUrl;
+            
             function updateYouTubeAuthUrl() {
                 var json = $('#jsonCredentials').val();
                 var mode = $('input[name="youtubeAuthMode"]:checked').val();
@@ -150,9 +169,12 @@
                     // Redirect URI based on mode
                     var redirectUri;
                     if (mode === 'automatic') {
-                        // Use adapter's OAuth callback endpoint
-                        var port = window.location.port || (window.location.protocol === 'https:' ? '443' : '80');
-                        redirectUri = encodeURIComponent('http://localhost:' + port + '/oauth/youtube');
+                        // Use adapter's webserver IP and port for OAuth callback
+                        // The adapter webserver handles /oauth/youtube endpoint
+                        var ip = adapterWebServerIp || 'localhost';
+                        var port = adapterWebServerPort || 8091;
+                        redirectUri = encodeURIComponent('http://' + ip + ':' + port + '/oauth/youtube');
+                        console.log('GoogleBroadcast: YouTube OAuth redirect URI:', 'http://' + ip + ':' + port + '/oauth/youtube');
                     } else {
                         // Safe mode - use OOB
                         redirectUri = encodeURIComponent('urn:ietf:wg:oauth:2.0:oob');
