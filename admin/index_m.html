@@ -125,6 +125,53 @@
             // Check initial YouTube token status
             checkYouTubeTokenStatus();
             
+            // Generate OAuth URL and update button href
+            function updateYouTubeAuthUrl() {
+                var json = $('#jsonCredentials').val();
+                var mode = $('input[name="youtubeAuthMode"]:checked').val();
+                var $btn = $('#btn_youtube_auth');
+                
+                if (!json) {
+                    $btn.attr('href', '#').addClass('disabled');
+                    return;
+                }
+                
+                try {
+                    var creds = JSON.parse(json);
+                    var keys = creds.installed || creds.web;
+                    if (!keys || !keys.client_id) {
+                        $btn.attr('href', '#').addClass('disabled');
+                        return;
+                    }
+                    
+                    // YouTube scope
+                    var scope = encodeURIComponent('https://www.googleapis.com/auth/youtube');
+                    
+                    // Redirect URI based on mode
+                    var redirectUri;
+                    if (mode === 'automatic') {
+                        // Use adapter's OAuth callback endpoint
+                        var port = window.location.port || (window.location.protocol === 'https:' ? '443' : '80');
+                        redirectUri = encodeURIComponent('http://localhost:' + port + '/oauth/youtube');
+                    } else {
+                        // Safe mode - use OOB
+                        redirectUri = encodeURIComponent('urn:ietf:wg:oauth:2.0:oob');
+                    }
+                    
+                    var url = 'https://accounts.google.com/o/oauth2/v2/auth' +
+                        '?access_type=offline' +
+                        '&scope=' + scope +
+                        '&prompt=consent' +
+                        '&response_type=code' +
+                        '&client_id=' + keys.client_id +
+                        '&redirect_uri=' + redirectUri;
+                    
+                    $btn.attr('href', url).removeClass('disabled');
+                } catch(e) {
+                    $btn.attr('href', '#').addClass('disabled');
+                }
+            }
+            
             // Set up radio button change handler
             $('input[name="youtubeAuthMode"]').on('change', function() {
                 var mode = $(this).val();
@@ -133,48 +180,41 @@
                 } else {
                     $('#youtube_safe_mode_input').removeClass('visible');
                 }
+                // Update URL when mode changes
+                updateYouTubeAuthUrl();
             });
             
-            // Authorize YouTube button
-            $('#btn_youtube_auth').on('click', function() {
+            // Update URL when credentials change
+            $('#jsonCredentials').on('change keyup', function() {
+                updateYouTubeAuthUrl();
+            });
+            
+            // Initial URL generation
+            updateYouTubeAuthUrl();
+            
+            // Click handler for the button - show instructions for safe mode
+            $('#btn_youtube_auth').on('click', function(e) {
                 var mode = $('input[name="youtubeAuthMode"]:checked').val();
+                var href = $(this).attr('href');
                 
-                // Request OAuth URL from adapter (uses credentials from jsonCredentials config)
-                sendTo(target, 'getYouTubeAuthUrl', { mode: mode }, function(response) {
-                    if (!response || !response.success) {
-                        var error = response && response.error ? response.error : 'Failed to generate auth URL. Make sure credentials.json is configured.';
-                        M.toast({html: '✗ ' + error});
-                        return;
-                    }
-                    
-                    if (!response.url) {
-                        M.toast({html: '✗ No credentials configured. Please paste credentials.json in the Assistant Credentials section first.'});
-                        return;
-                    }
-                    
-                    var url = response.url;
-                    
-                    if (mode === 'automatic') {
-                        // Open in popup for automatic mode
-                        var popup = window.open(url, 'YouTube Authorization', 'width=600,height=700');
-                        
-                        // Poll for completion
-                        var pollInterval = setInterval(function() {
-                            if (popup.closed) {
-                                clearInterval(pollInterval);
-                                // Check if tokens were received
-                                setTimeout(function() {
-                                    checkYouTubeTokenStatus();
-                                }, 1000);
-                            }
-                        }, 500);
-                    } else {
-                        // Open in new tab for safe mode
-                        window.open(url, '_blank');
-                        $('#youtube_safe_mode_input').addClass('visible');
-                        M.toast({html: 'Copy the code from Google and paste it below'});
-                    }
-                });
+                // Check if button is disabled or no URL
+                if (!href || href === '#' || $(this).hasClass('disabled')) {
+                    e.preventDefault();
+                    M.toast({html: '✗ Please paste credentials.json in the Assistant Credentials section first.'});
+                    return false;
+                }
+                
+                if (mode === 'safe') {
+                    // Show the code input field
+                    $('#youtube_safe_mode_input').addClass('visible');
+                    M.toast({html: 'Copy the code from Google and paste it below'});
+                } else {
+                    // For automatic mode, poll for token status after some time
+                    setTimeout(function() {
+                        checkYouTubeTokenStatus();
+                    }, 5000);
+                }
+                // Let the link open naturally (don't prevent default)
             });
             
             // Submit code button (Safe mode)
@@ -487,7 +527,7 @@
                 
                 <!-- Authorize Button -->
                 <div class="col s12" style="margin-top: 10px;">
-                    <a class="waves-effect waves-light btn red" id="btn_youtube_auth">Authorize YouTube Premium</a>
+                    <a class="waves-effect waves-light btn red disabled" id="btn_youtube_auth" href="#" target="_blank">Authorize YouTube Premium</a>
                     <a class="waves-effect waves-light btn grey" id="btn_youtube_clear" style="margin-left: 10px;">Clear Tokens</a>
                 </div>
                 

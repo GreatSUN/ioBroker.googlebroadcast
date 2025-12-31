@@ -1,8 +1,11 @@
 {
   "common": {
     "name": "googlebroadcast",
-    "version": "0.7.2",
+    "version": "0.7.3",
     "news": {
+      "0.7.3": {
+        "en": "Fixed YouTube auth button - now uses direct href link instead of JS popup"
+      },
       "0.7.2": {
         "en": "Fixed YouTube auth status display for dark mode"
       },
